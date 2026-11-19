@@ -1,0 +1,1 @@
+{"name":"@goat/opencode","version":"0.1.0","type":"module","exports":{".":"./src/index.ts","./tui":"./src/tui.ts","./rpc":"./src/rpc.ts"},"files":["src"],"dependencies":{"@goat/core":"0.1.0","@opencode/plugin":"2.3.2"}}
