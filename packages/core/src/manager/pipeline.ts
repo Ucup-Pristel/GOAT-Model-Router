@@ -1,10 +1,11 @@
 import type { GoatConfig, ModelRef } from "../config.js"
 import { createIntent } from "./intent.js"
-import type { CapabilityTier, ManagerReasoner, OriginalIntent, RoutingDecision, TaskAnalysis, TaskDecisionResult, TaskPlan, TaskSpecification, VerificationRequirements, WorkerPrompt } from "./contracts.js"
-import { planResink, planStandard } from "./planner.js"
+import type { CapabilityTier, ManagerReasoner, OriginalIntent, RoutingDecision, ScopeFinding, TaskAnalysis, TaskDecisionResult, TaskPlan, TaskSpecification, VerificationRequirements, WorkerPrompt } from "./contracts.js"
+import { planResinkDetailed, planStandard } from "./planner.js"
 import { compileWorkerPrompt } from "./prompt.js"
 import { analyzeTask, routeTask, validateManagerModel } from "./routing.js"
-import { assertTaskInScope, assertTaskPreservesIntent, validateTaskAnalysis, validateTaskDecisionResult, validateTaskPlan, validateTaskSpecification } from "./validate.js"
+import { collectInstructionFindings, collectIntentFindings, collectRiskFindings, collectScopeFindings } from "./scope.js"
+import { assertTaskPreservesIntent, validateTaskAnalysis, validateTaskDecisionResult, validateTaskPlan, validateTaskSpecification } from "./validate.js"
 
 function assertDecisionConfig(config: GoatConfig): void {
   if (!config || typeof config !== "object" || Array.isArray(config)) throw new Error("Invalid GOAT configuration")
@@ -38,6 +39,10 @@ function assertAvailableModels(models: readonly ModelRef[] | undefined): void {
 
 function unique(items: readonly string[]): string[] {
   return [...new Set(items)]
+}
+
+function findingKey(finding: ScopeFinding): string {
+  return `${finding.code}\u0000${finding.evidence}`
 }
 
 function normalizeTask(intent: OriginalIntent, task: TaskSpecification, extraCriteria: readonly string[]): TaskSpecification {
@@ -127,6 +132,9 @@ export async function decideTask(request: TaskDecisionRequest): Promise<TaskDeci
       decisions: [],
       prompts: [],
       verification: [],
+      scopeFindings: [],
+      reviewReasons: [],
+      readiness: "not_applicable",
     })
   }
 
@@ -134,11 +142,35 @@ export async function decideTask(request: TaskDecisionRequest): Promise<TaskDeci
 
   let tasks: readonly TaskSpecification[]
   let plan: TaskPlan | null = null
+  const planningFindings: ScopeFinding[] = []
   if (request.config.mode === "standard") {
     tasks = planStandard(intent, request.userPlan ?? intent.userPlan).tasks
   } else {
-    plan = planResink(intent, request.userPlan ?? intent.userPlan)
-    tasks = plan.tasks
+    const detailed = planResinkDetailed(intent, request.userPlan ?? intent.userPlan)
+    plan = detailed.plan
+    planningFindings.push(...detailed.findings)
+    if (!detailed.plan) {
+      const scopeFindings: ScopeFinding[] = [
+        ...planningFindings,
+        ...collectIntentFindings(intent),
+        ...collectInstructionFindings(intent),
+      ]
+      const reviewReasons = unique(scopeFindings.filter((finding) => finding.severity === "review").map((finding) => finding.message))
+      return validateTaskDecisionResult({
+        status: "needs_review",
+        reason: "No actionable task found; the decision requires human review and must not be dispatched automatically.",
+        intent,
+        tasks: [],
+        plan: null,
+        decisions: [],
+        prompts: [],
+        verification: [],
+        scopeFindings,
+        reviewReasons,
+        readiness: "needs_review",
+      })
+    }
+    tasks = detailed.plan.tasks
   }
 
   if (request.tier !== undefined) {
@@ -153,9 +185,19 @@ export async function decideTask(request: TaskDecisionRequest): Promise<TaskDeci
       acceptanceCriteria: unique([...plan.acceptanceCriteria, ...intent.acceptanceCriteria]),
     })
   }
+  const scopeFindings: ScopeFinding[] = [
+    ...planningFindings,
+    ...collectIntentFindings(intent),
+    ...collectInstructionFindings(intent),
+  ]
+  const seenFindings = new Set(scopeFindings.map(findingKey))
   for (const task of tasks) {
-    assertTaskInScope(task)
     assertTaskPreservesIntent(intent, task)
+    for (const finding of collectScopeFindings(task)) {
+      if (seenFindings.has(findingKey(finding))) continue
+      seenFindings.add(findingKey(finding))
+      scopeFindings.push(finding)
+    }
   }
 
   const decisions: RoutingDecision[] = []
@@ -182,6 +224,7 @@ export async function decideTask(request: TaskDecisionRequest): Promise<TaskDeci
         prohibitions: task.prohibitions,
       })
     }
+    scopeFindings.push(...collectRiskFindings({ id: task.id, risk: analysis.risk }))
     const routed = routeTask(task, request.config, request.availableModels, analysis)
     const decision: RoutingDecision = {
       ...routed.decision,
@@ -195,6 +238,9 @@ export async function decideTask(request: TaskDecisionRequest): Promise<TaskDeci
     verification.push(verificationFor(task, intent))
   }
 
+  const reviewReasons = unique(scopeFindings.filter((finding) => finding.severity === "review").map((finding) => finding.message))
+  const readiness = reviewReasons.length > 0 ? "needs_review" as const : "ready" as const
+
   return validateTaskDecisionResult({
     status: "planned",
     intent,
@@ -203,5 +249,8 @@ export async function decideTask(request: TaskDecisionRequest): Promise<TaskDeci
     decisions,
     prompts,
     verification,
+    scopeFindings,
+    reviewReasons,
+    readiness,
   })
 }

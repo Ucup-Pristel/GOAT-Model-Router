@@ -36,13 +36,17 @@ function assertSchema(value: unknown, schema: JsonSchemaShape, path = "$"): void
 }
 
 type DecideResponse = {
-  status: "planned" | "bypassed"
+  status: "planned" | "needs_review" | "bypassed"
+  readiness: "ready" | "needs_review" | "not_applicable"
   reason?: string
   result: {
     tasks: readonly unknown[]
     decisions: readonly { tier: string }[]
     prompts: readonly { text: string }[]
     plan: { mode: string; tasks: readonly unknown[]; dependencies: readonly unknown[] } | null
+    scopeFindings: readonly { code: string; severity: string }[]
+    reviewReasons: readonly string[]
+    readiness: "ready" | "needs_review" | "not_applicable"
   }
 }
 
@@ -75,6 +79,7 @@ test("decide RPC bypasses GOAT OFF without reading the model catalog", async () 
   const response = await handler({ request: { instruction: "Do the work." } })
   assertSchema(response, Goat.methods.decide.output as JsonSchemaShape)
   assert.equal(response.status, "bypassed")
+  assert.equal(response.readiness, "not_applicable")
   assert.match(response.reason ?? "", /GOAT is OFF/)
   assert.equal(response.result.tasks.length, 0)
   assert.equal(response.result.decisions.length, 0)
@@ -98,7 +103,31 @@ test("decide RPC plans a Standard task using live inventory without model genera
   assert.equal(response.result.tasks.length, 1)
   assert.equal(response.result.decisions[0].tier, "L1")
   assert.match(response.result.prompts[0].text, /Original task objective/)
+  assert.equal(response.result.readiness, "needs_review")
+  assert.ok(response.result.scopeFindings.some((finding) => finding.code === "ambiguous-instruction"))
   assert.equal(catalogReads, 1)
+})
+
+test("decide RPC exposes advisory scope findings without executing a worker", async () => {
+  const handler = await setup(
+    { ...defaults, enabled: true, models: { l2, l3 } },
+    async () => ({ data: [
+      { id: "l2-model", providerID: "provider" },
+      { id: "l3-model", providerID: "provider" },
+    ] }),
+  )
+  const response = await handler({ request: {
+    instruction: "Deploy the service to production.",
+    outcome: "The service is deployed.",
+    acceptanceCriteria: ["Service is reachable."],
+  } })
+  assertSchema(response, Goat.methods.decide.output as JsonSchemaShape)
+  assert.equal(response.status, "planned")
+  assert.equal(response.readiness, "needs_review")
+  assert.equal(response.result.readiness, "needs_review")
+  assert.ok(response.result.scopeFindings.some((finding) => finding.code === "possible-out-of-scope-action"))
+  assert.ok(response.result.reviewReasons.length > 0)
+  assert.equal(response.result.prompts.length, 1)
 })
 
 test("decide RPC honors an explicit capability tier", async () => {

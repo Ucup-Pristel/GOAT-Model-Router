@@ -8,7 +8,7 @@ Review performed read-only by an independent Auditor on 2026-11-19. This file re
 
 ### Independently verified
 
-- Node `22.23.5`; `npm run check` clean; Task 1 suite **7/7 pass, 0 fail** at the time. (The first audit ran 6/6 before the validation regression test was added; the re-audit verified 7/7. The current repository-wide suite includes Task 2 and is 41/41.)
+- Node `22.23.5`; `npm run check` clean; Task 1 suite **7/7 pass, 0 fail** at the time. (The first audit ran 6/6 before the validation regression test was added; the re-audit verified 7/7. The repository-wide suite at the Task 2 audit was 41/41; the current suite is documented in `docs/task-2-manager.md`.)
 - `packages/opencode/src/index.ts` returns `{ config: ... }`; `packages/opencode/src/rpc.ts` requires `config`; the regression test validates handler output against the real output schema and asserts a bare config fails with `Missing key at $.config`.
 - Exactly one TUI slash definition (`/goat`) with exactly five verbs; no duplicate server prompt command, prompt hook, or session/model generation path.
 - Typed RPC via `Rpc.define` and `context.client.rpc(Goat)`.

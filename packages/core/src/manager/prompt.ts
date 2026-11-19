@@ -1,5 +1,6 @@
-import type { CapabilityTier, OriginalIntent, TaskSpecification, WorkerPrompt } from "./contracts.js"
-import { assertTaskInScope, assertTaskPreservesIntent, validateWorkerPrompt } from "./validate.js"
+import type { CapabilityTier, OriginalIntent, ScopeFinding, TaskSpecification, WorkerPrompt } from "./contracts.js"
+import { collectInstructionFindings, collectScopeFindings } from "./scope.js"
+import { assertTaskPreservesIntent, validateWorkerPrompt } from "./validate.js"
 
 const tierGuidance: Record<CapabilityTier, string> = {
   L1: "Execute the assigned scope directly. Prefer a small, verifiable change and ask for clarification instead of expanding scope.",
@@ -17,22 +18,30 @@ function list(items: readonly string[], empty = "None specified."): string {
   return items.length > 0 ? items.map((item) => `- ${item}`).join("\n") : empty
 }
 
-function contextSection(intent: OriginalIntent): string {
+function contextSection(intent: OriginalIntent, findings: readonly ScopeFinding[]): string {
   const facts = [
     `Original request: ${intent.instruction}`,
     `Requested outcome: ${intent.outcome}`,
     ...(intent.ambiguities.length > 0 ? [`Known ambiguities: ${intent.ambiguities.join(" | ")}`] : []),
+    ...(findings.length > 0 ? [`Advisory scope findings (human review required before dispatch): ${findings.map((finding) => finding.message).join(" | ")}`] : []),
   ]
   return `${facts.map((line) => `- ${line}`).join("\n")}\n- No repository facts, tool results, or test outcomes are assumed beyond information explicitly supplied.`
 }
 
 export function compileWorkerPrompt(task: TaskSpecification, tier: CapabilityTier, intent: OriginalIntent, dependencies: readonly string[] = []): WorkerPrompt {
-  assertTaskInScope(task)
   assertTaskPreservesIntent(intent, task)
   if (task.tier && task.tier !== tier) throw new Error(`Prompt tier ${tier} does not match task tier ${task.tier}`)
+  const findings: ScopeFinding[] = []
+  const seenFindings = new Set<string>()
+  for (const finding of [...collectInstructionFindings(intent), ...collectScopeFindings(task)]) {
+    const key = `${finding.code}\u0000${finding.evidence}`
+    if (seenFindings.has(key)) continue
+    seenFindings.add(key)
+    findings.push(finding)
+  }
   const sections = {
     objective: task.objective,
-    context: contextSection(intent),
+    context: contextSection(intent, findings),
     scope: [
       `Assigned task: ${task.objective}`,
       `Tier focus: ${tierFocus[tier]}`,

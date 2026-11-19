@@ -1,6 +1,6 @@
-import type { OriginalIntent, TaskPlan, TaskSpecification } from "./contracts.js"
+import type { OriginalIntent, ScopeFinding, TaskPlan, TaskSpecification } from "./contracts.js"
 import { analyzeTask } from "./routing.js"
-import { assertTaskInScope, isProhibitionText, validateTaskPlan, validateTaskSpecification } from "./validate.js"
+import { isProhibitionText, validateTaskPlan, validateTaskSpecification } from "./validate.js"
 
 const defaultReportingFormat = "Report the completed work, evidence, tests or checks performed, unresolved risks, and any deviation from the assigned scope."
 
@@ -26,7 +26,6 @@ function taskFromObjective(intent: OriginalIntent, objective: string, index: num
     reportingFormat: defaultReportingFormat,
     sourceRequirements: [`intent:${intent.id}`, source],
   })
-  assertTaskInScope(task)
   return task
 }
 
@@ -56,7 +55,7 @@ function isNonActionableLine(value: string): boolean {
   line = line.replace(/^#{1,6}\s+/, "").trim()
   if (/^(?:-{3,}|\*{3,}|={3,})$/.test(line)) return true
   if (/^(?:n\/?a|none|tbd)$/i.test(line)) return true
-  if (/^\s*(?:constraints?|notes?|requirements?|rules?|context|scope|acceptance criteria|prohibitions?|instructions?|deliverables?|goals?|approach|implementation|implementation details|plans?|designs?|architectures?|risks?|dependencies|testing|tests?|quality|security|performance|documentation|references?|summary|overview|background|objectives?|tasks?|steps?|next steps|timeline|milestones?|acceptance|review|verification|challenges?|open questions?|success criteria|assumptions?|non-goals?|out of scope|notes and constraints|constraints and notes|risks and mitigations|open issues?|action items?|follow-ups?|decisions?|testing strategy|test plan|validation|rollout|migration plan|known issues?|open risks?|next actions?|action plan|success metrics|key risks?|questions?|mitigations?|risks\/mitigations|assumptions and risks|notes and risks|open questions and risks|review notes|testing notes|known problems?|open problems?|key questions?|unknowns?|constraints and assumptions|risks and assumptions|notes and assumptions|questions and answers|action items and owners|follow-up items|decisions and open questions|test results|testing summary|validation results|rollout plan|migration steps)\s*:?\s*$/i.test(line)) return true
+  if (/^\s*(?:constraints?|notes?|requirements?|rules?|context|scope|acceptance criteria|prohibitions?|instructions?|deliverables?|goals?|approach|implementation|implementation details|plans?|designs?|architectures?|risks?|dependencies|testing|tests?|quality|security|performance|documentation|references?|summary|overview|background|objectives?|tasks?|steps?|next steps|timeline|milestones?|acceptance|review|verification|challenges?|open questions?|success criteria|assumptions?|non-goals?|out of scope|notes and constraints|constraints and notes|risks and mitigations|open issues?|action items?|follow-ups?|decisions?|testing strategy|test plan|validation|rollout|migration plan|known issues?|open risks?|next actions?|action plan|success metrics|key risks?|questions?|mitigations?|risks\/mitigations|assumptions and risks|notes and risks|open questions and risks|review notes|testing notes|known problems?|open problems?|key questions?|unknowns?|constraints and assumptions|risks and assumptions|notes and assumptions|questions and answers|action items and owners|follow-up items|decisions and open questions|test results|testing summary|validation results|rollout plan|migration steps|findings|recommendations?|observations?|limitations?|open limitations|dependencies and risks|next steps and owners|open items|issues and risks|decisions needed|action items and status|test results and notes|validation summary|rollout checklist|migration plan and steps|known limitations|recommended actions|follow-up actions|questions and concerns|risks and open questions|acceptance criteria and verification)\s*:?\s*$/i.test(line)) return true
   const labeled = line.match(/^[A-Za-z][\w /-]*:\s*(.+)$/)
   if (labeled && isProhibitionText(labeled[1])) {
     const content = labeled[1]
@@ -144,16 +143,47 @@ export function planStandard(
   }
 }
 
-export function planResink(
+export type ResinkPlanDetails = {
+  readonly plan: TaskPlan | null
+  readonly findings: readonly ScopeFinding[]
+}
+
+function isFindingWorthySkippedItem(item: string): boolean {
+  const value = item.trim()
+  if (!value) return false
+  if (isProhibitionText(value)) return false
+  if (/^(?:-{3,}|\*{3,}|={3,})$/.test(value)) return false
+  if (/^(?:n\/?a|none|tbd)$/i.test(value)) return false
+  return true
+}
+
+export function planResinkDetailed(
   intent: OriginalIntent,
   userPlan: readonly string[] | null = intent.userPlan,
-): TaskPlan {
+): ResinkPlanDetails {
   const preserved = userPlan ? userPlanObjectives(intent, userPlan) : []
   const listed = preserved.length > 0 ? [] : explicitListObjectives(intent.instruction)
   const actionable = listed.map(actionableObjective).filter((item): item is string => Boolean(item))
+  const findings: ScopeFinding[] = listed
+    .filter(isFindingWorthySkippedItem)
+    .filter((item) => actionableObjective(item) === null)
+    .map((item) => ({
+      code: "skipped-non-actionable-item" as const,
+      severity: "advisory" as const,
+      message: `Explicit list item ${JSON.stringify(item)} was treated as a heading or non-actionable context and was not converted into a task.`,
+      evidence: item,
+    }))
   const proseLines = listed.length > 0 ? actionableProseLines(nonListProse(intent.instruction)) : []
   if (listed.length > 0 && actionable.length === 0 && proseLines.length === 0) {
-    throw new Error("No actionable task found: every explicit list item is a constraint or prohibition")
+    return {
+      plan: null,
+      findings: [...findings, {
+        code: "no-actionable-task",
+        severity: "review",
+        message: "No actionable task found: every explicit list item is a constraint, prohibition, or non-actionable heading.",
+        evidence: intent.instruction,
+      }],
+    }
   }
   const objectives = preserved.length > 0
     ? preserved
@@ -179,5 +209,14 @@ export function planResink(
     dependencies: preserved.length > 0 ? [] : dependenciesFor(tasks),
     acceptanceCriteria,
   }
-  return validateTaskPlan(plan)
+  return { plan: validateTaskPlan(plan), findings }
+}
+
+export function planResink(
+  intent: OriginalIntent,
+  userPlan: readonly string[] | null = intent.userPlan,
+): TaskPlan {
+  const detailed = planResinkDetailed(intent, userPlan)
+  if (!detailed.plan) throw new Error("No actionable task found: every explicit list item is a constraint, prohibition, or non-actionable heading")
+  return detailed.plan
 }

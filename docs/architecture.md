@@ -6,7 +6,7 @@ Task 1 implements configuration and control: `/goat router`, `/goat mode`, `/goa
 
 Task 2 does **not** execute workers, send prompts to models, create sessions, audit work, retry, or escalate. `/goat on` persists an opt-in flag; it does not start orchestration. `/goat status` continues to report `Orchestration: not implemented`.
 
-**Task 2 audit status:** implementation and tests are complete, but the independent Auditor verdict is **FAIL**. Task 2 is not accepted; see `docs/auditor-report-task-2.md`. Task 3 has not started.
+**Task 2 audit status:** the Option A scope redesign is implemented on `dev/task-2-scope-redesign`. Natural-language scope detection is advisory and dispatch readiness is explicit. The historical FAIL that motivated this redesign remains in `docs/auditor-report-task-2.md`. The Independent Auditor returned FAIL in all three rounds; round 3 found false readiness for recognized high-risk instructions masked by a benign outcome/user plan/Resink list and for `add`/`remove`/`implement`/`fix`/`develop`/`design`/`write` release/deploy forms. The two-rework limit is exhausted, so Task 2 is not accepted and Task 3 has not started. See `docs/auditor-report-task-2-option-a.md`.
 
 Official platform references checked 2026-11-19:
 
@@ -34,14 +34,15 @@ Task 2 exposes `decideTask` and the read-only `decide` RPC. The pipeline is:
 2. If GOAT is OFF, return an explicit bypass with no tasks, routing, prompts, verification, reasoner calls, or model-catalog read.
 3. Apply the mode policy:
    - **Standard:** preserve the user's ordered task plan, or create one task from the requested outcome. Never invoke the planner.
-   - **Resink:** preserve an existing user plan verbatim; otherwise use only explicit list items (`-`, `*`, `+`, numbered) as tasks, or one task containing the full instruction when no list exists. Prose sentences, arbitrary newlines, and code blocks are not split into tasks. Pure prohibition list items are constraints/context; combined constraint/action items keep the action when separated by comma/semicolon/colon/period/`but`/`and`/`then`/`or`/`however`/`yet`/`+`/`&`, labeled forms such as `Prohibited: deploy and update parser` keep the later action, and `Not only ... but also ...` is treated as an action. A list with no actionable item and no actionable non-list prose (common planning headings with or without colons, Markdown headings/separators, `N/A`, `None`, `TBD`, label-plus-prohibition lines, and prohibitions do not count) is rejected as having no actionable task. Every actionable list item is preserved without a truncation cap.
+   - **Resink:** preserve an existing user plan verbatim; otherwise use only explicit list items (`-`, `*`, `+`, numbered) as tasks, or one task containing the full instruction when no list exists. Prose sentences, arbitrary newlines, and code blocks are not split into tasks. Pure prohibition list items are constraints/context; combined constraint/action items keep the action when separated by comma/semicolon/colon/period/`but`/`and`/`then`/`or`/`however`/`yet`/`+`/`&`, labeled forms such as `Prohibited: deploy and update parser` keep the later action, and `Not only ... but also ...` is treated as an action. A list with no actionable item and no actionable non-list prose (common planning headings with or without colons, Markdown headings/separators, `N/A`, `None`, `TBD`, label-plus-prohibition lines, and prohibitions do not count) produces a `needs_review` decision with a `no-actionable-task` finding and no tasks, rather than inventing work. Every actionable list item is preserved without a truncation cap.
 4. Normalize and enforce intent traceability: every task receives all original prohibitions, constraints, acceptance criteria, permission boundaries, and the `intent:<id>` source. Missing fields are restored; malformed tasks are rejected.
 5. Propagate plan-level acceptance criteria into every task, prompt, and verification contract.
 6. Classify each task using deterministic complexity, risk, and context signals. A task or manager reasoner may request an explicit tier.
 7. Select L1/L2/L3 from the capability policy and require the configured model for that tier.
-8. Reject out-of-scope deploy/publish/release/ship/push action segments, including article/object, gerund, modifier, compound, no-space connector, and extra push-target forms, while allowing documentation/planning work, polite/noun bug-report tasks, normal read/review/update/fix tasks, code paths, `Push API/UI/service/updates/feature flags`, and release/ship feature delivery. Actual feature/bug deployment commands remain rejected.
-9. Compile an eight-section worker prompt tailored to the selected tier.
+8. Collect advisory scope findings from the original instruction and each planned task objective, so a benign outcome, user plan, or Resink list does not by itself suppress a finding for recognized risky text. Recognized direct `create`/`build`/`update` release/deploy/publish/ship/push commands are review findings; documentation and planning objects such as `Create a deployment guide` remain non-action context. The natural-language classifier never blocks a decision; it reports structured findings with `advisory` or `review` severity, and unknown phrasings may still be missed.
+9. Compile an eight-section worker prompt tailored to the selected tier. Advisory scope findings are included in the prompt context.
 10. Produce verification requirements for the future Auditor.
+11. Derive dispatch readiness: `needs_review` when any ambiguity, high-risk task, or review-level scope finding exists; otherwise `ready`. Task 2 never dispatches and Task 3 must enforce execution permissions.
 
 The detailed policy and contracts are documented in `docs/task-2-manager.md`.
 
@@ -55,6 +56,8 @@ Core contracts are independent of OpenCode:
 - `RoutingDecision` — tier, model, reasons, uncertainty, and decision source.
 - `WorkerPrompt` — eight required sections plus tier guidance.
 - `VerificationRequirements` — future Auditor criteria, evidence expectations, and pass condition.
+- `ScopeFinding` — advisory or review-level finding from the natural-language scope heuristic, with code, message, evidence, and optional task ID.
+- `DispatchReadiness` — `ready`, `needs_review`, or `not_applicable`; ambiguity, high risk, or review-level findings produce `needs_review`.
 
 A future model-backed Manager uses the `ManagerReasoner` interface to propose complexity/risk/context analysis and an optional explicit tier. Its output is validated, baseline uncertainty is added, and it cannot remove original constraints. Task 2 provides only the deterministic reasoner; no live model request is made. Model-generated task plans are a future integration boundary and are not accepted in Task 2.
 
@@ -73,7 +76,9 @@ Routing does not infer capability from model names, prices, or provider branding
 - OFF by default. OFF is derived from persisted config; Task 2 returns a bypass before planning, routing, prompt generation, reasoner calls, or model-catalog reads.
 - User intent is runtime-frozen. Tasks are normalized to retain constraints, prohibitions, acceptance criteria, permission boundaries, and intent traceability; the prompt compiler checks them again.
 - Plan-level acceptance criteria propagate to tasks, prompts, and verification.
-- Out-of-scope deploy/publish/release/ship/push action segments, including article/object, gerund, modifier, compound, no-space connector, and extra push-target forms, are rejected by a conservative heuristic. Documentation/planning work (`Deployment guide`, `Deploying our docs`, `Publish the new docs`, `Release the latest notes`, `Ship documentation`), polite/noun bug-report tasks (`Please review deployment`, `The deployment is broken`), normal read/review/update/fix tasks, code paths, `Push API/UI/service/updates/feature flags`, `Release/Ship the feature`, and `production deployment` are allowed. Actual feature/bug deployment commands such as `Deploy the feature`, `Deploy the bug fix`, `Publish the bug fix`, `Release the bug fix`, and `Ship the bug fix` are rejected. This is not a complete natural-language classifier; actual execution is impossible in Task 2.
+- Natural-language deploy/publish/release/ship/push detection is **advisory**. It produces `scopeFindings` and never throws for a phrase it does not recognize or misclassifies. Findings are collected from the original instruction as well as task objectives; recognized direct `create`/`build`/`update` release/deploy/publish/ship/push commands are review findings, while documentation/planning work, polite/status forms, code paths, and feature-delivery phrases are expected to produce no action finding. The heuristic is not a complete classifier, so a missed phrasing can still produce `ready`; Task 3 must enforce permissions at execution time.
+- Within a decision result, ambiguity, high-risk tasks, and review-level scope findings set `readiness: "needs_review"` with explicit `reviewReasons`; `"ready"` is accepted only when none are present. Deterministic contract validation still rejects malformed configuration, requests, intent, tasks, plans, decisions, prompts, and findings.
+- Runtime permission and scope enforcement is deferred to Task 3. Task 2 has no dispatcher to enforce it.
 - No worker execution, session creation, model prompt, tool execution, deployment, publishing, or Git push exists in Task 2.
 - No recursive GOAT invocation. Worker prompts explicitly prohibit recursion and permission escalation.
 - Permissions: future workers inherit OpenCode permissions; no privilege escalation. Auditor will be read-only and deny write/tool execution.
@@ -89,7 +94,7 @@ Routing does not infer capability from model names, prices, or provider branding
 ## Roadmap
 
 1. **Task 1 (completed, audited PASS):** configuration contracts, role model selection, Standard/Resink mode flag, persistent ON/OFF, single `/goat` command, isolated host verification.
-2. **Task 2 (implementation complete; independent audit FAIL; not accepted):** Manager intent/task contracts, Standard/Resink decision policy, capability routing, worker prompt compiler, internal decision RPC, deterministic tests. Remaining audit blockers are documented in `docs/auditor-report-task-2.md`.
+2. **Task 2 (Option A scope redesign implemented; independent audit blocked, not accepted):** Manager intent/task contracts, Standard/Resink decision policy, capability routing, worker prompt compiler, advisory scope findings, dispatch readiness, internal decision RPC, deterministic tests. The historical FAIL is preserved in `docs/auditor-report-task-2.md`; implementation self-verification is in `docs/scope-redesign-verification.md`. An independent verdict is still required.
 3. **Task 3:** bounded single-worker execution, permission inheritance, budgets, recursion marker, Auditor integration, retries/escalation, adversarial tests.
 4. **Task 4:** multi-worker routing, release packaging, version compatibility, and production verification.
 

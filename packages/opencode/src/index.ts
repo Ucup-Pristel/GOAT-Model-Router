@@ -90,8 +90,8 @@ export default Plugin.define({
           availableModels,
         })
         return result.reason
-          ? { status: result.status, reason: result.reason, result }
-          : { status: result.status, result }
+          ? { status: result.status, readiness: result.readiness, reason: result.reason, result }
+          : { status: result.status, readiness: result.readiness, result }
       },
     })
   },

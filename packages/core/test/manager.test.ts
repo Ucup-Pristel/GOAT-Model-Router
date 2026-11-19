@@ -12,6 +12,8 @@ import {
   tierForAnalysis,
   tierForTask,
   validateOriginalIntent,
+  validateScopeFinding,
+  validateTaskDecisionResult,
   validateTaskPlan,
   validateTaskSpecification,
   type GoatConfig,
@@ -222,14 +224,16 @@ test("the prompt compiler rejects a task that drops intent prohibitions or permi
   assert.throws(() => compileWorkerPrompt(unsafeTask, "L1", intent), /dropped an explicit prohibition/)
 })
 
-test("the prompt compiler rejects permission-only loss, out-of-scope objectives, and tier mismatch", () => {
+test("the prompt compiler rejects permission-only loss and tier mismatch but reports scope advisories", () => {
   const permissionIntent = createIntent({ instruction: "Perform the work.", permissionBoundaries: ["No network access."] })
   const missingPermission = task({ intentId: permissionIntent.id, sourceRequirements: [`intent:${permissionIntent.id}`], toolRestrictions: [] })
   assert.throws(() => compileWorkerPrompt(missingPermission, "L1", permissionIntent), /permission boundary/)
 
   const scopeIntent = createIntent({ instruction: "Perform the work." })
   const outOfScope = task({ intentId: scopeIntent.id, sourceRequirements: [`intent:${scopeIntent.id}`], objective: "Run deploy." })
-  assert.throws(() => compileWorkerPrompt(outOfScope, "L1", scopeIntent), /Out-of-scope objective/)
+  const prompt = compileWorkerPrompt(outOfScope, "L1", scopeIntent)
+  assert.match(prompt.text, /Advisory scope findings/)
+  assert.match(prompt.text, /Possible out-of-scope action/)
 
   const tierIntent = createIntent({ instruction: "Perform the work.", acceptanceCriteria: ["Work is complete."] })
   const tierTask = task({ intentId: tierIntent.id, sourceRequirements: [`intent:${tierIntent.id}`], tier: "L3", acceptanceCriteria: ["Work is complete."] })
@@ -243,6 +247,8 @@ test("ambiguous requirements are reported instead of invented", async () => {
     availableModels: [l1],
   })
   assert.ok(result.intent.ambiguities.length > 0)
+  assert.equal(result.readiness, "needs_review")
+  assert.ok(result.scopeFindings.some((finding) => finding.code === "ambiguous-instruction"))
   assert.match(result.prompts[0].text, /Known ambiguities:/)
 })
 
@@ -309,7 +315,7 @@ test("plan-level acceptance criteria propagate to tasks, prompts, and verificati
   assert.match(result.prompts[0].text, new RegExp(criterion.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
 })
 
-test("out-of-scope deploy, publish, release, and push objectives are rejected", async () => {
+test("out-of-scope deploy, publish, release, and push objectives produce review findings", async () => {
   for (const instruction of [
     "Deploy the service to production.",
     "Run deploy.",
@@ -536,11 +542,28 @@ test("out-of-scope deploy, publish, release, and push objectives are rejected", 
     "Update deploy script+deploy src/config",
     "Review deployment+deploy src/config",
     "Plan deployment+push origin/main",
+    "Create the release for all customers.",
+    "Create the release.",
+    "Build a release candidate for all customers.",
+    "Update the release package for all customers.",
+    "Create a deployment.",
+    "Build the production deployment.",
+    "Ship work to all customers.",
+    "Release work to all customers.",
+    "Deploy work to the production environment.",
+    "Publish work to all customers.",
+    "Push work to the remote repository.",
+    "Create the v2 release for all customers.",
+    "Build a v2 release candidate for all customers.",
+    "Update a v2 release package for all customers.",
+    "Create version 2 release for all customers.",
+    "Create v2 production deployment for all customers.",
+    "Build release v3 for all customers.",
   ]) {
-    await assert.rejects(
-      decideTask({ instruction, config: config(), availableModels: [l1, l2, l3] }),
-      /Out-of-scope objective/,
-    )
+    const result = await decideTask({ instruction, config: config(), availableModels: [l1, l2, l3] })
+    assert.equal(result.status, "planned", instruction)
+    assert.ok(result.scopeFindings.some((finding) => finding.code === "possible-out-of-scope-action"), instruction)
+    assert.equal(result.readiness, "needs_review", instruction)
   }
   for (const instruction of [
     "Push the boundary.",
@@ -681,21 +704,36 @@ test("out-of-scope deploy, publish, release, and push objectives are rejected", 
     "The push service is down",
     "The release notes need updating",
     "production deployment",
+    "Create the release notes.",
+    "Create a deployment guide.",
+    "Build the deployment pipeline.",
+    "Update the release schedule.",
+    "Update release notes.",
+    "Create release documentation.",
+    "Create the v2 deployment guide.",
+    "Update v2 release notes.",
+    "Build version 2 deployment pipeline.",
+    "Make a deployment plan.",
+    "Prepare a release checklist.",
+    "Produce a deployment report.",
+    "Cut a release notes draft.",
   ]) {
     const result = await decideTask({ instruction, config: config(), availableModels: [l1, l2, l3] })
-    assert.equal(result.status, "planned")
+    assert.equal(result.status, "planned", instruction)
+    assert.equal(result.scopeFindings.some((finding) => finding.code === "possible-out-of-scope-action"), false, instruction)
   }
 })
 
 test("explicit-list prohibitions are not promoted to tasks", async () => {
-  await assert.rejects(
-    decideTask({
-      instruction: "- Do not modify production configuration.\n- Do not touch secrets.",
-      config: config({ mode: "resink" }),
-      availableModels: [l1, l2, l3],
-    }),
-    /No actionable task found/,
-  )
+  const prohibitionsOnly = await decideTask({
+    instruction: "- Do not modify production configuration.\n- Do not touch secrets.",
+    config: config({ mode: "resink" }),
+    availableModels: [l1, l2, l3],
+  })
+  assert.equal(prohibitionsOnly.status, "needs_review")
+  assert.equal(prohibitionsOnly.readiness, "needs_review")
+  assert.equal(prohibitionsOnly.tasks.length, 0)
+  assert.ok(prohibitionsOnly.scopeFindings.some((finding) => finding.code === "no-actionable-task"))
   for (const instruction of [
     "Constraints:\n- Do not deploy.\n- Do not modify production configuration.",
     "Notes:\n- Do not deploy.",
@@ -772,10 +810,11 @@ test("explicit-list prohibitions are not promoted to tasks", async () => {
     "Rollout plan\n- Do not deploy.",
     "Migration steps\n- Do not deploy.",
   ]) {
-    await assert.rejects(
-      decideTask({ instruction, config: config({ mode: "resink" }), availableModels: [l1, l2, l3] }),
-      /No actionable task found/,
-    )
+    const result = await decideTask({ instruction, config: config({ mode: "resink" }), availableModels: [l1, l2, l3] })
+    assert.equal(result.status, "needs_review", instruction)
+    assert.equal(result.readiness, "needs_review", instruction)
+    assert.equal(result.tasks.length, 0, instruction)
+    assert.ok(result.scopeFindings.some((finding) => finding.code === "no-actionable-task"), instruction)
   }
 
   const mixed = await decideTask({
@@ -957,6 +996,9 @@ test("GOAT OFF bypasses the decision pipeline without tasks, prompts, or reasone
   assert.equal(result.decisions.length, 0)
   assert.equal(result.prompts.length, 0)
   assert.equal(result.verification.length, 0)
+  assert.equal(result.scopeFindings.length, 0)
+  assert.equal(result.reviewReasons.length, 0)
+  assert.equal(result.readiness, "not_applicable")
   assert.equal(called, 0)
 })
 
@@ -988,4 +1030,168 @@ test("a future manager reasoner can propose analysis without model calls", async
   assert.equal(result.decisions[0].decisionSource, "manager_reasoner")
   assert.ok(result.decisions[0].reasons.some((reason) => /Reasoner selected/.test(reason)))
   assert.ok(result.decisions[0].reasons.some((reason) => /Explicit tier L3/.test(reason)))
+})
+
+test("path-plus-command compounds produce review findings instead of hard rejection", async () => {
+  for (const instruction of [
+    "Update src/config+deploy service",
+    "Fix docs/release/notes+push production",
+    "Update publish/docs+run npm publish",
+  ]) {
+    const result = await decideTask({ instruction, config: config(), availableModels: [l1, l2, l3] })
+    assert.equal(result.status, "planned", instruction)
+    assert.equal(result.readiness, "needs_review", instruction)
+    assert.ok(result.scopeFindings.some((finding) => finding.code === "possible-out-of-scope-action"), instruction)
+    assert.ok(result.reviewReasons.length > 0, instruction)
+  }
+})
+
+test("polite gerund, infinitive, help, and status forms are accepted without scope findings", async () => {
+  for (const instruction of [
+    "Would you mind reviewing deployment",
+    "Please help reviewing deployment",
+    "Please make sure to review deployment",
+    "Please help me review deployment",
+    "Kindly review deployment",
+    "The deployment failed",
+    "The deployment completed",
+    "The deployment was broken",
+    "The deployment got broken",
+    "The deployment broke",
+    "The release notes need an update",
+    "The release notes are wrong",
+  ]) {
+    const result = await decideTask({ instruction, config: config(), availableModels: [l1, l2, l3] })
+    assert.equal(result.status, "planned", instruction)
+    assert.equal(result.scopeFindings.some((finding) => finding.code === "possible-out-of-scope-action"), false, instruction)
+  }
+})
+
+test("additional planning headings are skipped and reported as advisory findings", async () => {
+  const result = await decideTask({
+    instruction: "- Findings\n- Recommendations\n- Observations\n- Limitations\n- Update the parser.",
+    config: config({ mode: "resink" }),
+    availableModels: [l1, l2, l3],
+  })
+  assert.ok(result.plan)
+  assert.deepEqual(result.tasks.map((task) => task.objective), ["Update the parser."])
+  const skipped = result.scopeFindings.filter((finding) => finding.code === "skipped-non-actionable-item")
+  assert.deepEqual(skipped.map((finding) => finding.evidence), ["Findings", "Recommendations", "Observations", "Limitations"])
+  assert.equal(skipped.every((finding) => finding.severity === "advisory"), true)
+
+  const headingOnly = await decideTask({
+    instruction: "- Findings\n- Recommendations\n- Limitations",
+    config: config({ mode: "resink" }),
+    availableModels: [l1, l2, l3],
+  })
+  assert.equal(headingOnly.status, "needs_review")
+  assert.equal(headingOnly.tasks.length, 0)
+  assert.ok(headingOnly.scopeFindings.some((finding) => finding.code === "no-actionable-task"))
+})
+
+test("a fully specified low-risk request is ready for dispatch, while ambiguity and scope risk are not", async () => {
+  const ready = await decideTask({
+    instruction: "Implement the approved parser update.",
+    outcome: "The approved parser update is implemented.",
+    acceptanceCriteria: ["Parser tests pass."],
+    config: config(),
+    availableModels: [l1, l2, l3],
+  })
+  assert.equal(ready.readiness, "ready")
+  assert.equal(ready.scopeFindings.length, 0)
+  assert.equal(ready.reviewReasons.length, 0)
+
+  const ambiguous = await decideTask({
+    instruction: "Improve it.",
+    config: config(),
+    availableModels: [l1],
+  })
+  assert.equal(ambiguous.readiness, "needs_review")
+  assert.ok(ambiguous.scopeFindings.some((finding) => finding.code === "ambiguous-instruction"))
+
+  const risky = await decideTask({
+    instruction: "Deploy the service to production.",
+    outcome: "The service is deployed.",
+    acceptanceCriteria: ["Service is reachable."],
+    config: config(),
+    availableModels: [l1, l2, l3],
+  })
+  assert.equal(risky.readiness, "needs_review")
+  assert.ok(risky.scopeFindings.some((finding) => finding.code === "possible-out-of-scope-action"))
+})
+
+test("risky original instructions are reported even when an outcome, user plan, or Resink list masks them", async () => {
+  const outcomeMasked = await decideTask({
+    instruction: "Deploy the service to production and push main.",
+    outcome: "The requested documentation update is complete.",
+    acceptanceCriteria: ["The requested work is complete."],
+    config: config(),
+    availableModels: [l1, l2, l3],
+  })
+  assert.equal(outcomeMasked.status, "planned")
+  assert.equal(outcomeMasked.readiness, "needs_review")
+  assert.deepEqual(outcomeMasked.tasks.map((task) => task.objective), ["The requested documentation update is complete."])
+  const outcomeFindings = outcomeMasked.scopeFindings.filter((finding) => finding.code === "possible-out-of-scope-action")
+  assert.ok(outcomeFindings.some((finding) => finding.taskId === undefined))
+  assert.match(outcomeMasked.prompts[0].text, /Advisory scope findings/)
+
+  const userPlanMasked = await decideTask({
+    instruction: "Deploy the service to production and push main.",
+    userPlan: ["Update the README."],
+    acceptanceCriteria: ["The requested work is complete."],
+    config: config(),
+    availableModels: [l1, l2, l3],
+  })
+  assert.equal(userPlanMasked.readiness, "needs_review")
+  assert.deepEqual(userPlanMasked.tasks.map((task) => task.objective), ["Update the README."])
+  assert.ok(userPlanMasked.scopeFindings.some((finding) => finding.code === "possible-out-of-scope-action" && finding.taskId === undefined))
+
+  const resinkMasked = await decideTask({
+    instruction: "Deploy the service to production and push main.\n- Update the README.",
+    acceptanceCriteria: ["The requested work is complete."],
+    config: config({ mode: "resink" }),
+    availableModels: [l1, l2, l3],
+  })
+  assert.equal(resinkMasked.readiness, "needs_review")
+  assert.deepEqual(resinkMasked.tasks.map((task) => task.objective), ["Update the README."])
+  assert.ok(resinkMasked.scopeFindings.some((finding) => finding.code === "possible-out-of-scope-action" && finding.taskId === undefined))
+
+  for (const instruction of [
+    "Ship work to all customers.",
+    "Release work to all customers.",
+    "Deploy work to the production environment.",
+    "Publish work to all customers.",
+    "Push work to the remote repository.",
+    "Create the v2 release for all customers.",
+    "Build a v2 release candidate for all customers.",
+    "Update a v2 release package for all customers.",
+    "Create version 2 release for all customers.",
+    "Create v2 production deployment for all customers.",
+  ]) {
+    const masked = await decideTask({
+      instruction,
+      outcome: "The requested documentation update is complete.",
+      acceptanceCriteria: ["The requested work is complete."],
+      config: config(),
+      availableModels: [l1, l2, l3],
+    })
+    assert.equal(masked.readiness, "needs_review", instruction)
+    assert.ok(masked.scopeFindings.some((finding) => finding.code === "possible-out-of-scope-action" && finding.taskId === undefined), instruction)
+  }
+})
+
+test("decision result validation enforces readiness consistency deterministically", async () => {
+  const ready = await decideTask({
+    instruction: "Implement the approved parser update.",
+    outcome: "The approved parser update is implemented.",
+    acceptanceCriteria: ["Parser tests pass."],
+    config: config(),
+    availableModels: [l1, l2, l3],
+  })
+  assert.throws(() => validateTaskDecisionResult({
+    ...ready,
+    scopeFindings: [{ code: "high-risk-task", severity: "review", message: "Review required.", evidence: "risk=high" }],
+  }), /ready result must not contain review findings/)
+  assert.throws(() => validateTaskDecisionResult({ ...ready, readiness: "not_applicable" }), /must declare dispatch readiness/)
+  assert.throws(() => validateScopeFinding({ code: "possible-out-of-scope-action", severity: "critical", message: "x", evidence: "y" }), /ScopeFinding.severity/)
 })

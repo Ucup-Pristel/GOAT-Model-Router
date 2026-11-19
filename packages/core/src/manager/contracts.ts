@@ -95,7 +95,30 @@ export type ManagerReasoner = {
   analyzeTask?: (task: TaskSpecification, intent: OriginalIntent) => TaskAnalysis | Promise<TaskAnalysis>
 }
 
-export type TaskDecisionStatus = "planned" | "bypassed"
+export type TaskDecisionStatus = "planned" | "needs_review" | "bypassed"
+
+export type ScopeFindingCode =
+  | "possible-out-of-scope-action"
+  | "ambiguous-instruction"
+  | "high-risk-task"
+  | "skipped-non-actionable-item"
+  | "no-actionable-task"
+
+export type ScopeFindingSeverity = "advisory" | "review"
+
+/**
+ * Advisory finding produced by the natural-language heuristic. Findings never
+ * block a decision; review-level findings require a human before dispatch.
+ */
+export type ScopeFinding = {
+  readonly code: ScopeFindingCode
+  readonly severity: ScopeFindingSeverity
+  readonly message: string
+  readonly evidence: string
+  readonly taskId?: string
+}
+
+export type DispatchReadiness = "ready" | "needs_review" | "not_applicable"
 
 export type TaskDecisionResult = {
   readonly status: TaskDecisionStatus
@@ -106,4 +129,7 @@ export type TaskDecisionResult = {
   readonly decisions: readonly RoutingDecision[]
   readonly prompts: readonly WorkerPrompt[]
   readonly verification: readonly VerificationRequirements[]
+  readonly scopeFindings: readonly ScopeFinding[]
+  readonly reviewReasons: readonly string[]
+  readonly readiness: DispatchReadiness
 }

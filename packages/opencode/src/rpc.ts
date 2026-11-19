@@ -48,10 +48,11 @@ export const Goat = Rpc.define({
         type: "object",
         properties: {
           status: { type: "string" },
+          readiness: { type: "string" },
           reason: { type: "string" },
           result: { type: "object" },
         },
-        required: ["status", "result"],
+        required: ["status", "readiness", "result"],
         additionalProperties: false,
       },
     },
