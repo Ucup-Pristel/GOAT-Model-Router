@@ -8,7 +8,7 @@ Review performed read-only by an independent Auditor on 2026-11-19. This file re
 
 ### Independently verified
 
-- Node `22.23.5`; `npm run check` clean; `npm test` **7/7 pass, 0 fail**. (The first audit ran 6/6 before the validation regression test was added; the re-audit verified 7/7.)
+- Node `22.23.5`; `npm run check` clean; Task 1 suite **7/7 pass, 0 fail** at the time. (The first audit ran 6/6 before the validation regression test was added; the re-audit verified 7/7. The current repository-wide suite includes Task 2 and is 41/41.)
 - `packages/opencode/src/index.ts` returns `{ config: ... }`; `packages/opencode/src/rpc.ts` requires `config`; the regression test validates handler output against the real output schema and asserts a bare config fails with `Missing key at $.config`.
 - Exactly one TUI slash definition (`/goat`) with exactly five verbs; no duplicate server prompt command, prompt hook, or session/model generation path.
 - Typed RPC via `Rpc.define` and `context.client.rpc(Goat)`.
@@ -22,7 +22,7 @@ Review performed read-only by an independent Auditor on 2026-11-19. This file re
 - **Medium, fixed:** `setConfig` normalized malformed `models` (for example `models: []` or unknown role `l4`) instead of rejecting it. The RPC boundary now requires plain objects and rejects arrays, non-plain objects (`Date`, `Map`, `Set`, inherited prototypes), unknown top-level keys, wrong primitive types, unknown roles, and malformed/extra model-ref fields before persistence. The re-audit independently probed these shapes with `setCalls=0`. Regression test: `setConfig rejects malformed shapes instead of silently normalizing`. `getConfig` still safely falls back to defaults for malformed stored values; that is read-path sanitization, not silent acceptance of a write.
 - **Low, fixed:** stale Task 1A FAIL text in this file. Historical verdicts are now explicitly separated from the current Task 1C PASS.
 - **Low, fixed:** `/goat router ` with a trailing space showed the CLI-rejection message. Argument parsing trims first and rejects only non-empty extra arguments; the 1E host capture shows the picker opening for the trailing-space command.
-- **Low, open (process):** the repository has no commit baseline; all deliverables are untracked. No publish/push occurred. The Project Owner should create the baseline commit before further task work; scoped diff review is impossible until then.
+- **Low, resolved after Task 1C:** the Project Owner approved a local baseline commit. `dde15b6` now contains the verified Task 1 state; Task 2 changes are uncommitted working-tree changes. No publish/push occurred.
 
 ### Residual evidence gaps
 

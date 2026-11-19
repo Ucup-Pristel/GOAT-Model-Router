@@ -29,8 +29,8 @@ export default Plugin.define({
               const mode = requested === "standard" || requested === "resink"
                 ? requested
                 : await context.ui.dialog.select({ title: "GOAT mode", current: config.mode, options: [
-                    { title: "Standard", value: "standard", description: "No Manager Task Planner" },
-                    { title: "Resink", value: "resink", description: "Planner configuration only" },
+                    { title: "Standard", value: "standard", description: "Manager Task Planner disabled" },
+                    { title: "Resink", value: "resink", description: "Manager Task Planner enabled for decision requests" },
                   ] })
               if (mode) await goat.setConfig({ config: { ...config, mode } }, location)
               return

@@ -1,5 +1,5 @@
 import { Plugin } from "@opencode/plugin"
-import { defaults, modelStatus, validateConfig, type GoatConfig } from "@goat/core"
+import { decideTask, defaults, modelStatus, validateConfig } from "@goat/core"
 import { Goat } from "@goat/opencode/rpc"
 
 export default Plugin.define({
@@ -55,7 +55,7 @@ export default Plugin.define({
           if (mode !== "standard" && mode !== "resink") return { text: "Usage: /goat mode standard|resink" }
           config = { ...config, mode }
           await ctx.storage.set("config", config)
-          return { text: `GOAT mode: ${mode}. Planner execution remains unimplemented.` }
+          return { text: `GOAT mode: ${mode}. Manager planning is available for decision requests; worker execution remains unimplemented.` }
         }
         if (verb === "status") {
           const available = (await ctx.model.list()).data.map((model) => ({ providerID: model.providerID, modelID: model.id }))
@@ -65,6 +65,33 @@ export default Plugin.define({
           return { text: "Use the interactive /goat router menu to configure models." }
         }
         return { text: "Usage: /goat router|mode|on|off|status" }
+      },
+      decide: async (input) => {
+        const request = (input as { request?: unknown }).request
+        if (!isPlainObject(request)) throw new Error("Invalid decision request")
+        const allowed = ["instruction", "outcome", "userPlan", "constraints", "prohibitions", "acceptanceCriteria", "ambiguities", "permissionBoundaries", "tier"]
+        if (Object.keys(request).some((key) => !allowed.includes(key))) throw new Error("Invalid decision request")
+        if (typeof request.instruction !== "string" || !request.instruction.trim()) throw new Error("Invalid decision request: instruction is required")
+        const config = validateConfig(await ctx.storage.get("config") ?? defaults)
+        const availableModels = config.enabled
+          ? (await ctx.model.list()).data.map((model) => ({ providerID: model.providerID, modelID: model.id }))
+          : undefined
+        const result = await decideTask({
+          instruction: request.instruction,
+          outcome: request.outcome as string | undefined,
+          userPlan: request.userPlan as readonly string[] | null | undefined,
+          constraints: request.constraints as readonly string[] | undefined,
+          prohibitions: request.prohibitions as readonly string[] | undefined,
+          acceptanceCriteria: request.acceptanceCriteria as readonly string[] | undefined,
+          ambiguities: request.ambiguities as readonly string[] | undefined,
+          permissionBoundaries: request.permissionBoundaries as readonly string[] | undefined,
+          tier: request.tier as "L1" | "L2" | "L3" | undefined,
+          config,
+          availableModels,
+        })
+        return result.reason
+          ? { status: result.status, reason: result.reason, result }
+          : { status: result.status, result }
       },
     })
   },

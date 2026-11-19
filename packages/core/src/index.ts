@@ -2,6 +2,7 @@ export type TaskState = "queued" | "classifying" | "delegated" | "auditing" | "c
 export type { AuditResult } from "./contracts.js"
 export type { GoatConfig, ModelRef } from "./config.js"
 export { defaults, modelStatus, validateConfig } from "./config.js"
+export * from "./manager/index.js"
 
 const transitions: Record<TaskState, readonly TaskState[]> = {
   queued: ["classifying", "cancelled"],

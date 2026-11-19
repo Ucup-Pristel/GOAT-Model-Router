@@ -42,6 +42,19 @@ export const Goat = Rpc.define({
       input: { type: "object", properties: { input: { type: "string" } }, required: ["input"], additionalProperties: false },
       output: { type: "object", properties: { text: { type: "string" } }, required: ["text"], additionalProperties: false },
     },
+    decide: {
+      input: { type: "object", properties: { request: { type: "object" } }, required: ["request"], additionalProperties: false },
+      output: {
+        type: "object",
+        properties: {
+          status: { type: "string" },
+          reason: { type: "string" },
+          result: { type: "object" },
+        },
+        required: ["status", "result"],
+        additionalProperties: false,
+      },
+    },
   },
   events: {},
 })
