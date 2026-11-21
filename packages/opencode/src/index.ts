@@ -5,6 +5,7 @@ import { Goat } from "@goat/opencode/rpc"
 export default Plugin.define({
   id: "goat.model-router",
   async setup(ctx) {
+    let modelOnlyState: "ready" | "running" | "spent" | "timed_out" = "ready"
     await ctx.rpc.register(Goat, {
       health: async (input) => {
         const { requestID } = input as { requestID: string }
@@ -48,18 +49,18 @@ export default Plugin.define({
         if (verb === "on" || verb === "off") {
           config = { ...config, enabled: verb === "on" }
           await ctx.storage.set("config", config)
-          return { text: `GOAT ${verb.toUpperCase()}. Orchestration execution remains unimplemented.` }
+          return { text: `GOAT ${verb.toUpperCase()}. Orchestration execution remains disabled: OpenCode has no verified Project Owner identity authority.` }
         }
         if (verb === "mode") {
           const mode = args[0]
           if (mode !== "standard" && mode !== "resink") return { text: "Usage: /goat mode standard|resink" }
           config = { ...config, mode }
           await ctx.storage.set("config", config)
-          return { text: `GOAT mode: ${mode}. Manager planning is available for decision requests; worker execution remains unimplemented.` }
+          return { text: `GOAT mode: ${mode}. Manager planning is available; worker execution remains disabled pending verified Project Owner authority.` }
         }
         if (verb === "status") {
           const available = (await ctx.model.list()).data.map((model) => ({ providerID: model.providerID, modelID: model.id }))
-          return { text: `Enabled: ${config.enabled}\nMode: ${config.mode}\nManager: ${config.inheritManagerModel ? "inherit session model" : modelStatus(config.models.manager, available)}\nL1: ${modelStatus(config.models.l1, available)}\nL2: ${modelStatus(config.models.l2, available)}\nL3: ${modelStatus(config.models.l3, available)}\nAuditor: ${modelStatus(config.models.auditor, available)}\nOrchestration: not implemented` }
+          return { text: `Enabled: ${config.enabled}\nMode: ${config.mode}\nManager: ${config.inheritManagerModel ? "inherit session model" : modelStatus(config.models.manager, available)}\nL1: ${modelStatus(config.models.l1, available)}\nL2: ${modelStatus(config.models.l2, available)}\nL3: ${modelStatus(config.models.l3, available)}\nAuditor: ${modelStatus(config.models.auditor, available)}\nOrchestration: disabled (no verified Project Owner authority)` }
         }
         if (verb === "router") {
           return { text: "Use the interactive /goat router menu to configure models." }
@@ -89,9 +90,53 @@ export default Plugin.define({
           config,
           availableModels,
         })
-        return result.reason
-          ? { status: result.status, readiness: result.readiness, reason: result.reason, result }
-          : { status: result.status, readiness: result.readiness, result }
+        const { reason, ...serializableResult } = result
+        return reason
+          ? { status: result.status, readiness: result.readiness, reason, result: serializableResult }
+          : { status: result.status, readiness: result.readiness, result: serializableResult }
+      },
+      runModelOnly: async (input) => {
+        const { confirm } = input as { confirm: string }
+        if (confirm !== "GOAT_MODEL_ONLY_SYNTHETIC") throw new Error("Model-only POC requires explicit synthetic confirmation")
+        if (modelOnlyState !== "ready") throw new Error(`Model-only POC is unavailable: ${modelOnlyState}`)
+        const config = validateConfig(await ctx.storage.get("config") ?? defaults)
+        if (!config.enabled) throw new Error("GOAT is OFF; model-only POC bypassed")
+        const model = config.models.l1
+        if (!model) throw new Error("Model-only POC requires configured L1 model")
+        const available = (await ctx.model.list()).data
+        if (!available.some((candidate) => candidate.providerID === model.providerID && candidate.id === model.modelID)) throw new Error(`Unavailable model: ${model.providerID}/${model.modelID}`)
+        const decision = await decideTask({
+          instruction: "Reply with exactly GOAT_MODEL_ONLY_OK.",
+          outcome: "Return the synthetic confirmation string.",
+          acceptanceCriteria: ["Response contains GOAT_MODEL_ONLY_OK."],
+          tier: "L1",
+          config,
+          availableModels: available.map((candidate) => ({ providerID: candidate.providerID, modelID: candidate.id })),
+        })
+        const task = decision.tasks[0]
+        const routing = decision.decisions[0]
+        const prompt = decision.prompts[0]
+        if (!task || !routing || !routing.model || !prompt) throw new Error("Model-only POC planning failed")
+        modelOnlyState = "running"
+        const startedAt = Date.now()
+        const generation = ctx.experimental.generate.text({ model: { providerID: routing.model.providerID, id: routing.model.modelID }, prompt: prompt.text })
+        const result = await Promise.race([
+          generation,
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Model-only POC local wait budget exhausted; provider request may still be running")), 30_000)),
+        ]).catch((error: unknown) => {
+          modelOnlyState = "timed_out"
+          throw error
+        })
+        modelOnlyState = "spent"
+        return {
+          status: "completed",
+          intentID: decision.intent.id,
+          taskID: task.id,
+          tier: routing.tier,
+          model: { providerID: routing.model.providerID, modelID: routing.model.modelID },
+          result: result.text,
+          elapsedMs: Date.now() - startedAt,
+        }
       },
     })
   },

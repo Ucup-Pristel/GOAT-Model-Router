@@ -56,6 +56,18 @@ export const Goat = Rpc.define({
         additionalProperties: false,
       },
     },
+    runModelOnly: {
+      input: { type: "object", properties: { confirm: { type: "string" } }, required: ["confirm"], additionalProperties: false },
+      output: {
+        type: "object",
+        properties: {
+          status: { type: "string" }, intentID: { type: "string" }, taskID: { type: "string" }, tier: { type: "string" },
+          model: { type: "object", properties: { providerID: { type: "string" }, modelID: { type: "string" } }, required: ["providerID", "modelID"], additionalProperties: false },
+          result: { type: "string" }, elapsedMs: { type: "number" },
+        },
+        required: ["status", "intentID", "taskID", "tier", "model", "result", "elapsedMs"], additionalProperties: false,
+      },
+    },
   },
   events: {},
 })
