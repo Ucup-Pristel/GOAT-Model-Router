@@ -281,3 +281,100 @@ test("model-only POC refuses GOAT OFF before model generation", async () => {
   } as never)
   await assert.rejects(handlers!.runModelOnly({ confirm: "GOAT_MODEL_ONLY_SYNTHETIC" } as never), /GOAT is OFF/)
 })
+
+// Property 1: Bug Condition for the model-only POC (DEF-1 to DEF-3).
+// **Validates: Requirements 1.1, 1.2, 1.3, 1.4, 2.1, 2.2, 2.3, 2.4**
+
+type GenerateText = (input: { model: { providerID: string; id: string }; prompt: string }) => Promise<{ text: string }>
+
+async function setupModelOnly(generate: GenerateText) {
+  let handlers: Record<string, (input: never) => Promise<unknown>> | undefined
+  await plugin.setup({
+    rpc: { register: async (_definition: unknown, value: typeof handlers) => { handlers = value } },
+    storage: { get: async () => ({ ...defaults, enabled: true, models: { l1 } }), set: async () => undefined },
+    model: { list: async () => ({ data: [{ id: "l1-model", providerID: "provider" }] }) },
+    provider: { list: async () => ({ data: [] }) },
+    experimental: { generate: { text: generate } },
+  } as never)
+  return () => handlers!.runModelOnly({ confirm: "GOAT_MODEL_ONLY_SYNTHETIC" } as never)
+}
+
+test("model-only POC calls generate.text once when two confirmed calls overlap (DEF-1)", async () => {
+  let calls = 0
+  const runModelOnly = await setupModelOnly(async () => {
+    calls++
+    return { text: "GOAT_MODEL_ONLY_OK" }
+  })
+  const settled = await Promise.allSettled([runModelOnly(), runModelOnly()])
+  const rejections = settled.flatMap((result) => (result.status === "rejected" ? [String(result.reason)] : []))
+  const fulfilled = settled.length - rejections.length
+  assert.equal(calls, 1, `generate.text was called ${calls} times; ${fulfilled} calls fulfilled; rejections: [${rejections.join(" | ")}]`)
+  assert.equal(fulfilled, 1)
+  assert.equal(rejections.length, 1)
+  assert.match(rejections[0], /unavailable: running/)
+})
+
+test("model-only POC clears its wait timer when generation settles first (DEF-2)", async () => {
+  const runModelOnly = await setupModelOnly(async () => ({ text: "GOAT_MODEL_ONLY_OK" }))
+  const pendingTimeouts = () => process.getActiveResourcesInfo().filter((resource) => resource === "Timeout").length
+  const before = pendingTimeouts()
+  await runModelOnly()
+  const after = pendingTimeouts()
+  assert.equal(after, before, `pending Timeout handles went from ${before} to ${after}`)
+})
+
+test("model-only POC records a provider rejection as failed, not timed out (DEF-3)", async () => {
+  const runModelOnly = await setupModelOnly(async () => { throw new Error("provider 401") })
+  await assert.rejects(runModelOnly(), /provider 401/)
+  await assert.rejects(runModelOnly(), /unavailable: failed/)
+})
+
+test("model-only POC records a synchronous generation throw as failed (DEF-3)", async () => {
+  const runModelOnly = await setupModelOnly(() => { throw new Error("provider 401") })
+  await assert.rejects(runModelOnly(), /provider 401/)
+  await assert.rejects(runModelOnly(), /unavailable: failed/)
+})
+
+// Property 2: Preservation for the model-only POC.
+// **Validates: Requirements 3.1, 3.2, 3.3**
+
+test("model-only POC keeps its single request after a GOAT OFF rejection (preservation)", async () => {
+  let enabled = false
+  let calls = 0
+  let handlers: Record<string, (input: never) => Promise<unknown>> | undefined
+  await plugin.setup({
+    rpc: { register: async (_definition: unknown, value: typeof handlers) => { handlers = value } },
+    storage: { get: async () => ({ ...defaults, enabled, models: { l1 } }), set: async () => undefined },
+    model: { list: async () => ({ data: [{ id: "l1-model", providerID: "provider" }] }) },
+    provider: { list: async () => ({ data: [] }) },
+    experimental: { generate: { text: async () => {
+      calls++
+      return { text: "GOAT_MODEL_ONLY_OK" }
+    } } },
+  } as never)
+  const runModelOnly = () => handlers!.runModelOnly({ confirm: "GOAT_MODEL_ONLY_SYNTHETIC" } as never)
+  await assert.rejects(runModelOnly(), /GOAT is OFF/)
+  assert.equal(calls, 0)
+  enabled = true
+  const result = await runModelOnly() as { result: string }
+  assert.equal(result.result, "GOAT_MODEL_ONLY_OK")
+  assert.equal(calls, 1)
+})
+
+test("model-only POC records an exhausted wait budget as timed out (preservation)", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] })
+  let calls = 0
+  let signalCalled!: () => void
+  const called = new Promise<void>((resolve) => { signalCalled = resolve })
+  const runModelOnly = await setupModelOnly(() => {
+    calls++
+    signalCalled()
+    return new Promise<never>(() => undefined)
+  })
+  const exhausted = assert.rejects(runModelOnly(), /wait budget exhausted/)
+  await called
+  t.mock.timers.tick(30_000)
+  await exhausted
+  await assert.rejects(runModelOnly(), /unavailable: timed_out/)
+  assert.equal(calls, 1)
+})

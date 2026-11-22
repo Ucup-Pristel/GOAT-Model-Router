@@ -5,7 +5,7 @@ import { Goat } from "@goat/opencode/rpc"
 export default Plugin.define({
   id: "goat.model-router",
   async setup(ctx) {
-    let modelOnlyState: "ready" | "running" | "spent" | "timed_out" = "ready"
+    let modelOnlyState: "ready" | "running" | "spent" | "timed_out" | "failed" = "ready"
     await ctx.rpc.register(Goat, {
       health: async (input) => {
         const { requestID } = input as { requestID: string }
@@ -99,43 +99,56 @@ export default Plugin.define({
         const { confirm } = input as { confirm: string }
         if (confirm !== "GOAT_MODEL_ONLY_SYNTHETIC") throw new Error("Model-only POC requires explicit synthetic confirmation")
         if (modelOnlyState !== "ready") throw new Error(`Model-only POC is unavailable: ${modelOnlyState}`)
-        const config = validateConfig(await ctx.storage.get("config") ?? defaults)
-        if (!config.enabled) throw new Error("GOAT is OFF; model-only POC bypassed")
-        const model = config.models.l1
-        if (!model) throw new Error("Model-only POC requires configured L1 model")
-        const available = (await ctx.model.list()).data
-        if (!available.some((candidate) => candidate.providerID === model.providerID && candidate.id === model.modelID)) throw new Error(`Unavailable model: ${model.providerID}/${model.modelID}`)
-        const decision = await decideTask({
-          instruction: "Reply with exactly GOAT_MODEL_ONLY_OK.",
-          outcome: "Return the synthetic confirmation string.",
-          acceptanceCriteria: ["Response contains GOAT_MODEL_ONLY_OK."],
-          tier: "L1",
-          config,
-          availableModels: available.map((candidate) => ({ providerID: candidate.providerID, modelID: candidate.id })),
-        })
-        const task = decision.tasks[0]
-        const routing = decision.decisions[0]
-        const prompt = decision.prompts[0]
-        if (!task || !routing || !routing.model || !prompt) throw new Error("Model-only POC planning failed")
         modelOnlyState = "running"
-        const startedAt = Date.now()
-        const generation = ctx.experimental.generate.text({ model: { providerID: routing.model.providerID, id: routing.model.modelID }, prompt: prompt.text })
-        const result = await Promise.race([
-          generation,
-          new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Model-only POC local wait budget exhausted; provider request may still be running")), 30_000)),
-        ]).catch((error: unknown) => {
-          modelOnlyState = "timed_out"
+        let generating = false
+        let timedOut = false
+        let timer: ReturnType<typeof setTimeout> | undefined
+        try {
+          const config = validateConfig(await ctx.storage.get("config") ?? defaults)
+          if (!config.enabled) throw new Error("GOAT is OFF; model-only POC bypassed")
+          const model = config.models.l1
+          if (!model) throw new Error("Model-only POC requires configured L1 model")
+          const available = (await ctx.model.list()).data
+          if (!available.some((candidate) => candidate.providerID === model.providerID && candidate.id === model.modelID)) throw new Error(`Unavailable model: ${model.providerID}/${model.modelID}`)
+          const decision = await decideTask({
+            instruction: "Reply with exactly GOAT_MODEL_ONLY_OK.",
+            outcome: "Return the synthetic confirmation string.",
+            acceptanceCriteria: ["Response contains GOAT_MODEL_ONLY_OK."],
+            tier: "L1",
+            config,
+            availableModels: available.map((candidate) => ({ providerID: candidate.providerID, modelID: candidate.id })),
+          })
+          const task = decision.tasks[0]
+          const routing = decision.decisions[0]
+          const prompt = decision.prompts[0]
+          if (!task || !routing || !routing.model || !prompt) throw new Error("Model-only POC planning failed")
+          generating = true
+          const startedAt = Date.now()
+          const generation = ctx.experimental.generate.text({ model: { providerID: routing.model.providerID, id: routing.model.modelID }, prompt: prompt.text })
+          const result = await Promise.race([
+            generation,
+            new Promise<never>((_, reject) => {
+              timer = setTimeout(() => {
+                timedOut = true
+                reject(new Error("Model-only POC local wait budget exhausted; provider request may still be running"))
+              }, 30_000)
+            }),
+          ])
+          modelOnlyState = "spent"
+          return {
+            status: "completed",
+            intentID: decision.intent.id,
+            taskID: task.id,
+            tier: routing.tier,
+            model: { providerID: routing.model.providerID, modelID: routing.model.modelID },
+            result: result.text,
+            elapsedMs: Date.now() - startedAt,
+          }
+        } catch (error) {
+          modelOnlyState = !generating ? "ready" : timedOut ? "timed_out" : "failed"
           throw error
-        })
-        modelOnlyState = "spent"
-        return {
-          status: "completed",
-          intentID: decision.intent.id,
-          taskID: task.id,
-          tier: routing.tier,
-          model: { providerID: routing.model.providerID, modelID: routing.model.modelID },
-          result: result.text,
-          elapsedMs: Date.now() - startedAt,
+        } finally {
+          clearTimeout(timer)
         }
       },
     })

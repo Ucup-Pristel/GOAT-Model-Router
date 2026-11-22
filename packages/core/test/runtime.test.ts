@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { inspect } from "node:util"
 import {
   assertRuntimeBudget,
   authorizeRuntimeOperation,
@@ -10,9 +11,11 @@ import {
   denyAllRuntimePolicy,
   dryRunBudget,
   recordRuntimeAuthorization,
+  runtimeEligibility,
   validateRuntimeBudget,
   validateRuntimePolicy,
   type RuntimeAuthorizationPolicy,
+  type RuntimeRun,
   type TaskSpecification,
 } from "../src/index.js"
 
@@ -66,4 +69,63 @@ test("advisory Task 2 readiness cannot grant runtime operation permission", () =
   assert.equal(authorizeRuntimeOperation(maliciousPolicy, "destructive").allowed, false)
   assert.equal(authorizeRuntimeOperation(maliciousPolicy, "credential").allowed, false)
   assert.equal(authorizeRuntimeOperation(maliciousPolicy, "git_push").allowed, false)
+})
+
+// Property 1: Bug Condition for the runtime lifecycle (DEF-4, DEF-5).
+// **Validates: Requirements 1.5, 1.6, 1.7, 1.8, 2.5, 2.6, 2.7, 2.8**
+
+const fixtureIntent = createIntent({ id: "intent-1", instruction: "Update the fixture.", acceptanceCriteria: ["passes"] })
+
+function authorizedRun(): RuntimeRun {
+  const run = createRuntimeRun({ id: "run-3", intent: fixtureIntent, task, budget: { ...dryRunBudget, maxModelRequests: 1 } })
+  return recordRuntimeAuthorization(run, policy, "filesystem_write", "fixture.txt")
+}
+
+// Like assert.throws, but when the call returns instead of throwing, the failure shows what it returned.
+function assertFailsClosed(action: () => unknown, expected: RegExp): void {
+  let returned: unknown
+  try {
+    returned = action()
+  } catch (error) {
+    assert.match(String(error), expected)
+    return
+  }
+  if (returned && typeof returned === "object" && "trace" in returned) {
+    const { state, executionDepth, budget } = returned as RuntimeRun
+    returned = { state, executionDepth, budget }
+  }
+  assert.fail(`Expected a throw matching ${expected}, but the call returned ${inspect(returned, { breakLength: Infinity })}`)
+}
+
+test("validateRuntimeBudget rejects a budget with missing keys (DEF-4)", () => {
+  assertFailsClosed(() => validateRuntimeBudget({ maxDurationMs: 10 } as never), /Invalid runtime budget/)
+})
+
+test("validateRuntimeBudget rejects a budget with an unknown key (DEF-4)", () => {
+  assertFailsClosed(() => validateRuntimeBudget({ ...dryRunBudget, extra: 1 } as never), /Invalid runtime budget/)
+})
+
+test("createRuntimeRun rejects a partial budget (DEF-4)", () => {
+  assertFailsClosed(() => createRuntimeRun({ id: "run-3", intent: fixtureIntent, task, budget: { maxDurationMs: 10 } as never }), /Invalid runtime budget/)
+})
+
+test("runtimeEligibility rejects a partial budget instead of allowing dispatch (DEF-4)", () => {
+  assertFailsClosed(() => runtimeEligibility({ intent: fixtureIntent } as never, task, policy, { maxDurationMs: 10 } as never), /Invalid runtime budget/)
+})
+
+test("beginRuntimeRun rejects a hand-built run with a partial budget (DEF-4)", () => {
+  assertFailsClosed(() => beginRuntimeRun({ ...authorizedRun(), budget: { maxDurationMs: 10 } as never }, "filesystem_write", "fixture.txt"), /Invalid runtime budget/)
+})
+
+test("createRuntimeRun rejects an execution depth above the budget (DEF-5)", () => {
+  const budget = { ...dryRunBudget, maxModelRequests: 1, maxExecutionDepth: 1 }
+  assertFailsClosed(() => createRuntimeRun({ id: "run-3", intent: fixtureIntent, task, budget, executionDepth: 5 }), /execution depth/)
+})
+
+test("beginRuntimeRun rejects a hand-built run whose execution depth exceeds the budget (DEF-5)", () => {
+  assertFailsClosed(() => beginRuntimeRun({ ...authorizedRun(), executionDepth: 5 }, "filesystem_write", "fixture.txt"), /execution depth/)
+})
+
+test("beginRuntimeRun rejects a hand-built run whose execution depth is NaN (DEF-5)", () => {
+  assertFailsClosed(() => beginRuntimeRun({ ...authorizedRun(), executionDepth: Number.NaN }, "filesystem_write", "fixture.txt"), /execution depth/)
 })
