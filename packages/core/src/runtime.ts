@@ -86,11 +86,23 @@ function trace(run: RuntimeRun, event: RuntimeTrace["event"], message: string, o
 }
 
 export function validateRuntimeBudget(value: RuntimeBudget): RuntimeBudget {
-  for (const [key, number] of Object.entries(value)) {
-    if (!Number.isSafeInteger(number) || number < 0) throw new Error(`Invalid runtime budget: ${key}`)
+  const keys = ["maxModelRequests", "maxDurationMs", "maxWorkerRetries", "maxAuditorRetries", "maxExecutionDepth"] as const
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("Invalid runtime budget")
+  for (const key of Object.keys(value)) {
+    if (!keys.includes(key as (typeof keys)[number])) throw new Error(`Invalid runtime budget: ${key}`)
+  }
+  for (const key of keys) {
+    const number = (value as unknown as Record<string, unknown>)[key]
+    if (typeof number !== "number" || !Number.isSafeInteger(number) || number < 0) throw new Error(`Invalid runtime budget: ${key}`)
   }
   if (value.maxDurationMs === 0 || value.maxExecutionDepth === 0) throw new Error("Invalid runtime budget: duration and execution depth must be positive")
-  return { ...value }
+  return {
+    maxModelRequests: value.maxModelRequests,
+    maxDurationMs: value.maxDurationMs,
+    maxWorkerRetries: value.maxWorkerRetries,
+    maxAuditorRetries: value.maxAuditorRetries,
+    maxExecutionDepth: value.maxExecutionDepth,
+  }
 }
 
 export function validateRuntimePolicy(value: RuntimeAuthorizationPolicy): RuntimeAuthorizationPolicy {
@@ -129,6 +141,8 @@ export function createRuntimeRun(input: { id: string; intent: OriginalIntent; ta
   const budget = validateRuntimeBudget(input.budget)
   if (!input.id.trim()) throw new Error("Invalid runtime run id")
   if (input.task.intentId !== input.intent.id) throw new Error("Runtime task is not traceable to OriginalIntent")
+  const executionDepth = input.executionDepth ?? 1
+  if (!Number.isSafeInteger(executionDepth) || executionDepth <= 0 || executionDepth > budget.maxExecutionDepth) throw new Error("Invalid runtime execution depth")
   const run: RuntimeRun = {
     id: input.id,
     intent: input.intent,
@@ -136,7 +150,7 @@ export function createRuntimeRun(input: { id: string; intent: OriginalIntent; ta
     state: "queued",
     budget,
     modelRequests: 0,
-    executionDepth: input.executionDepth ?? 1,
+    executionDepth,
     trace: [],
   }
   return trace(run, "dispatch", "Runtime run created in dry state.")
@@ -154,7 +168,10 @@ export function beginRuntimeRun(run: RuntimeRun, operation: RuntimeOperation, re
   if (run.state !== "authorized") throw new Error("Runtime run must be authorized before execution")
   if (run.authorizedOperation !== operation || run.authorizedResource !== resource) throw new Error("Runtime operation is not authorized for this resource")
   if (highImpact.has(operation)) throw new Error("High-impact runtime operations are disabled without verified Project Owner authority")
-  if (run.modelRequests >= run.budget.maxModelRequests) throw new Error("Runtime model-request budget exhausted")
+  const budget = validateRuntimeBudget(run.budget)
+  if (!Number.isSafeInteger(run.executionDepth) || run.executionDepth <= 0) throw new Error("Invalid runtime execution depth")
+  if (run.executionDepth > budget.maxExecutionDepth) throw new Error("Runtime execution depth exceeds budget")
+  if (run.modelRequests >= budget.maxModelRequests) throw new Error("Runtime model-request budget exhausted")
   return trace({ ...run, state: "running", startedAt: now, modelRequests: run.modelRequests + 1 }, "dispatch", "Runtime execution began.")
 }
 
