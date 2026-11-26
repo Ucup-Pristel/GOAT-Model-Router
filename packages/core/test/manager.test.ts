@@ -1180,6 +1180,27 @@ test("risky original instructions are reported even when an outcome, user plan, 
   }
 })
 
+test("the object of the original action, not surrounding documentation, determines its review finding", async () => {
+  const options = {
+    outcome: "The requested documentation update is complete.",
+    acceptanceCriteria: ["The requested work is complete."],
+    config: config(),
+    availableModels: [l1, l2, l3],
+  }
+  for (const instruction of [
+    "Cut the release following the approved checklist.",
+    "Create a release containing the updated documentation.",
+  ]) {
+    const result = await decideTask({ ...options, instruction })
+    assert.equal(result.readiness, "needs_review", instruction)
+    assert.ok(result.scopeFindings.some(f => !f.taskId && f.code === "possible-out-of-scope-action"), instruction)
+  }
+  for (const instruction of ["Fix the typo in the release notes.", "Read the production deployment guide."]) {
+    const result = await decideTask({ ...options, instruction })
+    assert.equal(result.readiness, "ready", instruction)
+  }
+})
+
 test("decision result validation enforces readiness consistency deterministically", async () => {
   const ready = await decideTask({
     instruction: "Implement the approved parser update.",

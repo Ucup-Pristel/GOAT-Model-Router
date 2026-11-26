@@ -2,9 +2,11 @@
 
 Open-source, model-agnostic orchestration plugin for OpenCode V2. Task 1 provides the configuration/control plane. Task 2 adds the **Manager decision layer**: intent preservation, Standard/Resink planning policy, capability-tier routing, and worker prompt compilation.
 
-Runtime worker execution, AI auditing, retries, and escalation are **not implemented yet**. GOAT never claims end-to-end orchestration.
+On a conversation-enabled local mock host, the primary Build agent can run a verified text task from an ordinary prompt after `/goat on`. It uses the same dispatcher as the explicit `dispatchText` RPC, with a deny-all Worker, a separate deny-all Auditor and at most one rework. See [activation and conversation evidence](docs/task-3-conversation.md) and the [RPC baseline](docs/task-3-plugin-integration.md).
 
-**Task 2 status:** the Option A scope redesign is implemented on `dev/task-2-scope-redesign`: natural-language scope classification is now advisory (`scopeFindings`), while deterministic contract validation remains hard. Runtime permission enforcement is deferred to Task 3. The Independent Auditor returned **FAIL** in all three rounds. Round 3 found remaining false readiness: recognized high-risk original instructions (`Delete the production database`, `Update production credentials`) masked by a benign outcome/user plan/Resink list were not risk-analyzed, and `add`/`remove`/`implement`/`fix`/`develop`/`design`/`write` release/deploy forms still bypassed the scan. The two-rework limit is exhausted, so implementation stopped. Task 2 is **not accepted**, and Task 3 has not started. See `docs/auditor-report-task-2-option-a.md`.
+For the first owner-operated live coding test, see the [private Linux coding profile and exact launch instructions](docs/task-3-live-coding.md). It uses the configured Manager, Worker and Auditor, a disposable single-file workspace, and kernel-isolated Python function checks. Development verification used only the local mock.
+
+**Manager status:** the [historical Option A audit](docs/auditor-report-task-2-option-a.md) returned FAIL in all three rounds. The subsequent targeted repair on the orchestration branch addresses the two confirmed round-3 defects: original instruction risk masked by planning, and direct release/deploy actions mistaken for documentation. See the [scoped verification and Task 3 handoff](docs/manager-repair-and-task-3-handoff.md). Advisory readiness does not authorize worker dispatch.
 
 GOAT defaults **OFF**. While OFF, the plugin exposes only the `/goat` TUI command and its RPC handlers; it does not run the decision pipeline, intercept normal prompts, create sessions, or call models.
 
@@ -42,7 +44,7 @@ See `docs/task-2-manager.md` for contracts, policy assumptions, and limitations.
 
 - Node.js 22.19+ (verified with 22.22.1)
 - npm 10+
-- OpenCode V2 `2.3.2` (plugin API is beta; exact SDK version is pinned)
+- OpenCode V2 `2.3.2` (regression baseline), `2.4.1`, or `2.4.2`. The development SDK remains pinned to `2.3.2`. See the [verified host matrix](docs/task-3-opencode-compat.md).
 
 ## Local checks
 
@@ -51,6 +53,10 @@ npm install
 npm run check
 npm test
 ```
+
+To reproduce the Manager re-audit and native host probes with a local mock provider,
+run `npm run audit:milestone` with OpenCode 2.3.2. See the [original reproductions and host setup](docs/manager-and-host-reaudit.md)
+and the [post-repair results and remaining skips](docs/manager-repair-and-task-3-handoff.md).
 
 ## Isolated plugin loading
 
@@ -81,8 +87,8 @@ Verify `/goat status` in the real TUI, then exercise router, mode, on, and off. 
 ## Current limitations
 
 - Task 2 does not route work to a running worker, create sessions, or invoke worker/auditor models.
-- `/goat on` is an opt-in flag only; orchestration remains unimplemented.
-- Standard and Resink differ only in Manager Task Planner policy. Neither executes tasks.
+- Conversation dispatch requires the provisioned isolated profile as well as `/goat on`. The RPC-only profile and ordinary installations do not intercept prompts. Production dispatch is disabled.
+- Standard and Resink retain their Manager policies. The isolated RPC executes only a single ready task with a supported verifier.
 - Natural-language scope and heading heuristics are advisory. They can produce false positives or miss a phrasing; `scopeFindings` is not a security boundary.
 - `readiness: "needs_review"` prevents the decision from being declared dispatch-ready, but Task 2 never dispatches; Task 3 must enforce permissions and scope at execution time.
 - The deterministic routing policy is an initial explainable baseline; live model-backed Manager reasoning is a future integration boundary.

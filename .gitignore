@@ -3,6 +3,3 @@ dist/
 coverage/
 .kiro
 .vscode
-# Local AI IDE configuration
-.kiro/
-.vscode/

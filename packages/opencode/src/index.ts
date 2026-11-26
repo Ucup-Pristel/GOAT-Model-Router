@@ -1,12 +1,15 @@
 import { Plugin } from "@opencode/plugin"
 import { decideTask, defaults, modelStatus, validateConfig } from "@goat/core"
 import { Goat } from "@goat/opencode/rpc"
+import { textRuntime } from "./text-runtime.js"
 
 export default Plugin.define({
   id: "goat.model-router",
   async setup(ctx) {
+    const dispatchText = await textRuntime(ctx)
     let modelOnlyState: "ready" | "running" | "spent" | "timed_out" | "failed" = "ready"
     await ctx.rpc.register(Goat, {
+      dispatchText: (input, context) => dispatchText(input, context.signal),
       health: async (input) => {
         const { requestID } = input as { requestID: string }
         return { pluginID: "goat.model-router", active: true, handled: true, protocolVersion: "1", requestID }
@@ -49,18 +52,19 @@ export default Plugin.define({
         if (verb === "on" || verb === "off") {
           config = { ...config, enabled: verb === "on" }
           await ctx.storage.set("config", config)
-          return { text: `GOAT ${verb.toUpperCase()}. Orchestration execution remains disabled: OpenCode has no verified Project Owner identity authority.` }
+          return { text: `GOAT ${verb.toUpperCase()}. In the isolated conversation profile, use the Build agent for verified text tasks.` }
         }
         if (verb === "mode") {
           const mode = args[0]
           if (mode !== "standard" && mode !== "resink") return { text: "Usage: /goat mode standard|resink" }
           config = { ...config, mode }
           await ctx.storage.set("config", config)
-          return { text: `GOAT mode: ${mode}. Manager planning is available; worker execution remains disabled pending verified Project Owner authority.` }
+          return { text: `GOAT mode: ${mode}. Production dispatch disabled.` }
         }
         if (verb === "status") {
+          const latest = await ctx.storage.get("lastCodingTurn")
           const available = (await ctx.model.list()).data.map((model) => ({ providerID: model.providerID, modelID: model.id }))
-          return { text: `Enabled: ${config.enabled}\nMode: ${config.mode}\nManager: ${config.inheritManagerModel ? "inherit session model" : modelStatus(config.models.manager, available)}\nL1: ${modelStatus(config.models.l1, available)}\nL2: ${modelStatus(config.models.l2, available)}\nL3: ${modelStatus(config.models.l3, available)}\nAuditor: ${modelStatus(config.models.auditor, available)}\nOrchestration: disabled (no verified Project Owner authority)` }
+          return { text: `Enabled: ${config.enabled}\nMode: ${config.mode}\nManager: ${config.inheritManagerModel ? "inherit session model" : modelStatus(config.models.manager, available)}\nL1: ${modelStatus(config.models.l1, available)}\nL2: ${modelStatus(config.models.l2, available)}\nL3: ${modelStatus(config.models.l3, available)}\nAuditor: ${modelStatus(config.models.auditor, available)}\nOrchestration: provisioned profiles only; production disabled${latest ? `\nLast coding turn: ${JSON.stringify(latest)}` : ""}` }
         }
         if (verb === "router") {
           return { text: "Use the interactive /goat router menu to configure models." }

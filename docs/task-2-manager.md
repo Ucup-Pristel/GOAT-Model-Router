@@ -4,6 +4,8 @@ Task 2 implements the Manager's decision foundation only. It does not execute wo
 
 The Option A scope redesign is implemented on `dev/task-2-scope-redesign`. The Independent Auditor returned FAIL in all three rounds; round 3 found remaining false readiness for recognized high-risk instructions masked by a benign outcome/user plan/Resink list and for additional release/deploy verbs. The two-rework limit is exhausted, so Task 2 is not accepted and implementation stopped. See `docs/auditor-report-task-2-option-a.md` and `docs/scope-redesign-verification.md`.
 
+For the subsequent, separately approved B1/B2 repair on the orchestration branch, see the [scoped repair and verification](manager-repair-and-task-3-handoff.md).
+
 ## Scope
 
 Implemented in `packages/core/src/manager`:
@@ -32,7 +34,7 @@ All contracts live in `packages/core/src/manager/contracts.ts` and are independe
 | `RoutingDecision` | Selected capability tier, configured model ref, deterministic reasons, uncertainty, and decision source. An explicit tier can come from the task or a manager reasoner. |
 | `WorkerPrompt` | Eight-section prompt plus tier guidance and rendered text. Advisory scope findings are included in the context section. |
 | `VerificationRequirements` | Future Auditor criteria, expected evidence, and `all-criteria` pass condition. |
-| `ScopeFinding` | Natural-language advisory record with `code`, `severity`, `message`, `evidence`, and optional `taskId`. Codes are `possible-out-of-scope-action`, `ambiguous-instruction`, `high-risk-task`, `skipped-non-actionable-item`, and `no-actionable-task`. |
+| `ScopeFinding` | Natural-language advisory record with `code`, `severity`, `message`, `evidence`, and optional `taskId`. Codes are `possible-out-of-scope-action`, `ambiguous-instruction`, `high-risk-instruction` (original instruction, no `taskId`), `high-risk-task`, `skipped-non-actionable-item`, and `no-actionable-task`. |
 | `DispatchReadiness` | `ready`, `needs_review`, or `not_applicable`. `needs_review` is set by ambiguity, high-risk analysis, or a review-level finding; `not_applicable` is used when GOAT is OFF. |
 
 `OriginalIntent.instruction` is not rewritten or summarized in storage. Every task carries `intent:<id>` in `sourceRequirements`. The pipeline normalizes every task to include all original constraints, prohibitions, acceptance criteria, and permission boundaries, then rejects any task that still drops one or its intent trace. The prompt compiler performs the same preservation check for direct callers.

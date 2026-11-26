@@ -100,6 +100,7 @@ export type TaskDecisionStatus = "planned" | "needs_review" | "bypassed"
 export type ScopeFindingCode =
   | "possible-out-of-scope-action"
   | "ambiguous-instruction"
+  | "high-risk-instruction"
   | "high-risk-task"
   | "skipped-non-actionable-item"
   | "no-actionable-task"

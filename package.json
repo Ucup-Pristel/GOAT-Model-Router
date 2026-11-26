@@ -7,7 +7,8 @@
   "workspaces": ["packages/*"],
   "scripts": {
     "check": "tsc --noEmit",
-    "test": "tsx --test packages/core/test/*.test.ts packages/opencode/test/*.test.ts"
+    "test": "tsx --test packages/core/test/*.test.ts packages/opencode/test/*.test.ts",
+    "audit:milestone": "node --import tsx --test packages/core/test/*.test.ts packages/opencode/test/*.test.ts tests/milestone/*.test.mjs"
   },
   "devDependencies": {
     "@opencode/plugin": "2.3.2",

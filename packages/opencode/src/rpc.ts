@@ -3,6 +3,13 @@ import { Rpc } from "@opencode/plugin/rpc"
 export const Goat = Rpc.define({
   id: "goat.model-router",
   methods: {
+    dispatchText: {
+      input: { type: "object", properties: {
+        sessionID: { type: "string" }, capability: { type: "string" }, instruction: { type: "string", maxLength: 2048 },
+        tier: { enum: ["L1", "L2", "L3"] },
+      }, required: ["sessionID", "capability", "instruction"], additionalProperties: false },
+      output: { type: "object", properties: { status: { type: "string" }, reason: { type: "string" } }, required: ["status", "reason"] },
+    },
     health: {
       input: {
         type: "object",

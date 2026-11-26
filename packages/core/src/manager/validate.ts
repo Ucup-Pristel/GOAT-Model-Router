@@ -212,6 +212,7 @@ export function isProhibitionText(value: string): boolean {
 const scopeFindingCodes = [
   "possible-out-of-scope-action",
   "ambiguous-instruction",
+  "high-risk-instruction",
   "high-risk-task",
   "skipped-non-actionable-item",
   "no-actionable-task",
