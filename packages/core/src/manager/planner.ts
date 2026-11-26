@@ -160,9 +160,10 @@ function isFindingWorthySkippedItem(item: string): boolean {
 export function planResinkDetailed(
   intent: OriginalIntent,
   userPlan: readonly string[] | null = intent.userPlan,
+  managerSteps?: readonly string[],
 ): ResinkPlanDetails {
   const preserved = userPlan ? userPlanObjectives(intent, userPlan) : []
-  const listed = preserved.length > 0 ? [] : explicitListObjectives(intent.instruction)
+  const listed = preserved.length > 0 ? [] : managerSteps ?? explicitListObjectives(intent.instruction)
   const actionable = listed.map(actionableObjective).filter((item): item is string => Boolean(item))
   const findings: ScopeFinding[] = listed
     .filter(isFindingWorthySkippedItem)
@@ -199,7 +200,7 @@ export function planResinkDetailed(
     intent,
     objective,
     index,
-    preserved.length > 0 ? `user-plan:${index + 1}` : actionable.length > 0 ? `resink-list:${index + 1}` : proseLines.length > 0 ? "resink:prose" : "resink:instruction",
+    preserved.length > 0 ? `user-plan:${index + 1}` : managerSteps ? `manager-plan:${index + 1}` : actionable.length > 0 ? `resink-list:${index + 1}` : proseLines.length > 0 ? "resink:prose" : "resink:instruction",
     acceptanceCriteria,
   ))
   const plan: TaskPlan = {

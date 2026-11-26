@@ -38,6 +38,7 @@ export default Plugin.define({
           for (const model of Object.values(validated.models)) if (model && !available.some((candidate) => candidate.providerID === model.providerID && candidate.id === model.modelID)) throw new Error(`Unavailable model: ${model.providerID}/${model.modelID}`)
         }
         await ctx.storage.set("config", validated)
+        if (JSON.stringify(previous) !== JSON.stringify(validated)) dispatchText.cancel()
         return { config: validated }
       },
       listModels: async () => {
@@ -52,6 +53,7 @@ export default Plugin.define({
         if (verb === "on" || verb === "off") {
           config = { ...config, enabled: verb === "on" }
           await ctx.storage.set("config", config)
+          if (verb === "off") dispatchText.cancel()
           return { text: `GOAT ${verb.toUpperCase()}. In the isolated conversation profile, use the Build agent for verified text tasks.` }
         }
         if (verb === "mode") {
@@ -100,6 +102,7 @@ export default Plugin.define({
           : { status: result.status, readiness: result.readiness, result: serializableResult }
       },
       runModelOnly: async (input) => {
+        if (process.env.GOAT_LIVE_PROFILE && ctx.location?.directory === process.env.GOAT_TEXT_PROJECT) throw Error("Model-only probe disabled on live profiles")
         const { confirm } = input as { confirm: string }
         if (confirm !== "GOAT_MODEL_ONLY_SYNTHETIC") throw new Error("Model-only POC requires explicit synthetic confirmation")
         if (modelOnlyState !== "ready") throw new Error(`Model-only POC is unavailable: ${modelOnlyState}`)

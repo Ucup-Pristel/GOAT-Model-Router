@@ -5,9 +5,12 @@ import { execFileSync, spawnSync } from "node:child_process"
 import { isAbsolute, join } from "node:path"
 import { tmpdir } from "node:os"
 import { fileURLToPath } from "node:url"
-import { checkVersion, codingAgents, deny, installPrivatePlugin } from "./private-plugin.mjs"
+import { parseArgs } from "node:util"
+import { checkVersion, codingAgents, projectAgents, signProject, deny, installPrivatePlugin } from "./private-plugin.mjs"
 
-const [providerFile, taskFile] = process.argv.slice(2)
+const { positionals: [providerFile, taskFile], values: options } = parseArgs({ allowPositionals: true,
+  options: { project: { type: "string" }, instruction: { type: "string" }, ...Object.fromEntries(
+    ["edit", "read", "test", "step"].map(k => [k, { type: "string", multiple: true }])) } })
 const binary = process.env.OPENCODE_BIN
 if (!providerFile || !isAbsolute(binary ?? "") || process.platform !== "linux") {
   throw Error("Linux: set absolute OPENCODE_BIN and pass a private JSON file with model and providers")
@@ -36,10 +39,21 @@ if (execFileSync("/usr/bin/python3", ["-ISB", fileURLToPath(probe)], { cwd: "/",
   throw Error("Cannot establish coding isolation")
 }
 await installPrivatePlugin(project)
-await cp(taskFile ?? new URL("./live-task.json", import.meta.url), env.GOAT_CODE_MANIFEST)
+let instruction
+if (options.project) {
+  if (taskFile) throw Error("Use either --project or a single-file manifest")
+  if (execFileSync("/usr/bin/python3", ["-ISB", fileURLToPath(probe)], { cwd: root, env: {}, input: '{"suite":null}', encoding: "utf8" }) !== '"isolated"') {
+    throw Error("Project test isolation unavailable")
+  }
+  await signProject(env, options, await readFile(process.env.GOAT_OWNER_SIGNING_KEY), await readFile(process.env.GOAT_OWNER_VERIFY_KEY, "utf8"))
+  instruction = options.instruction
+} else {
+  await cp(taskFile ?? new URL("./live-task.json", import.meta.url), env.GOAT_CODE_MANIFEST)
+  instruction = JSON.parse(await readFile(env.GOAT_CODE_MANIFEST, "utf8")).instruction
+}
 await writeFile(env.OPENCODE_CONFIG, JSON.stringify({ ...source, plugins: ["./.opencode/plugins/goat"], update: "disable", warming: false,
-  permissions: deny, agents: codingAgents }))
-console.log(`Disposable private host: ${root} (${version})\nSelect Build, configure /goat router, /goat on, then send:\n${JSON.parse(await readFile(env.GOAT_CODE_MANIFEST, "utf8")).instruction}`)
+  permissions: deny, agents: options.project ? projectAgents : codingAgents }))
+console.log(`Disposable private host: ${root} (${version})\nSelect Build, configure /goat router, /goat on, then send:\n${instruction}`)
 const run = spawnSync(binary, ["--standalone"], { cwd: project, env, stdio: "inherit" })
 if (run.error) throw run.error
 process.exitCode = run.status ?? 1

@@ -21,7 +21,7 @@ export default Plugin.define({
             const [verb, ...args] = (input ?? "status").trim().split(/\s+/)
             if (verb === "on" || verb === "off") {
               await goat.setConfig({ config: { ...config, enabled: verb === "on" } }, location)
-              await context.ui.dialog.alert({ title: `GOAT ${verb}`, message: `GOAT ${verb.toUpperCase()} saved. In the isolated conversation profile, use Build and enter a text task normally.` })
+              await context.ui.dialog.alert({ title: `GOAT ${verb}`, message: `GOAT ${verb.toUpperCase()} saved.${verb === "on" ? " In the private coding host, send the authorized task to Build." : ""}` })
               return
             }
             if (verb === "mode") {

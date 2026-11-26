@@ -2,20 +2,22 @@ import assert from "node:assert/strict"
 import { spawn, execFileSync } from "node:child_process"
 import { once } from "node:events"
 import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
-import { randomBytes } from "node:crypto"
+import { generateKeyPairSync, randomBytes } from "node:crypto"
 import { createServer } from "node:http"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createInterface } from "node:readline"
-import { checkVersion, codingAgents, deny, installPrivatePlugin } from "./private-plugin.mjs"
+import { checkVersion, codingAgents, projectAgents, signProject, deny, installPrivatePlugin } from "./private-plugin.mjs"
+import { fileURLToPath } from "node:url"
 
 export { deny }
 export const model = { providerID: "fixture", id: "mock" }
 
 // Start a private host, not the user's service. Register cleanup before any
 // subsequent operation can fail. The only tool the mock can request is read.
-export async function startHost(t, syntheticReply, plugin = false) {
-  const coding = plugin === "coding"
+export async function startHost(t, syntheticReply, plugin = false, options = {}) {
+  const multi = plugin === "project"
+  const coding = plugin === "coding" || multi
   const binary = process.env.OPENCODE_BIN || "opencode"
   const root = await mkdtemp(join(tmpdir(), "goat-audit-"))
   const project = join(root, "project")
@@ -27,7 +29,7 @@ export async function startHost(t, syntheticReply, plugin = false) {
     NO_PROXY: "localhost,127.0.0.1" }
   let host, exited
   const calls = []
-  let slow
+  let slow, slowRoleSeen = false
   const provider = createServer(async (req, res) => {
     // Record arrival before decoding or rejecting: auxiliary host requests and
     // unexpected endpoints must be visible to the scenario's budget checks.
@@ -62,17 +64,21 @@ export async function startHost(t, syntheticReply, plugin = false) {
     const finish = () => {
       const useRead = (prompt.includes("LOOP_TOOL") ? readCount < 6 : !readCount && prompt.includes("USE_TOOL"))
         && tools.some(t => t.function.name === "read")
-      const useGoat = (plugin === "conversation" || coding) && call.tools.includes(text?.tool)
-      const delta = useGoat ? { tool_calls: [{ index: 0, type: "function", id: `goat_${calls.length}`,
-        function: { name: text.tool, arguments: JSON.stringify(text.args ?? {}) } }] } : useRead ? { tool_calls: [{ index: 0, type: "function", id: `read_${readCount}`,
+      const batch = Array.isArray(text) ? text : [text]
+      const useGoat = (plugin === "conversation" || coding) && batch.every(t => call.tools.includes(t?.tool) ||
+        options.attemptSubagent && t?.tool === "subagent")
+      const delta = useGoat ? { tool_calls: batch.map((t, index) => ({ index, type: "function", id: `goat_${calls.length}_${index}`,
+        function: { name: t.tool, arguments: JSON.stringify(t.args ?? {}) } })) } : useRead ? { tool_calls: [{ index: 0, type: "function", id: `read_${readCount}`,
         function: { name: "read", arguments: JSON.stringify({ path: prompt.includes("OUTSIDE") ? outside : file }) } }] }
         : { content: text }
       chunk([{ index: 0, delta: { role: "assistant", ...delta }, finish_reason: null }])
       chunk([{ index: 0, delta: {}, finish_reason: useRead || useGoat ? "tool_calls" : "stop" }])
-      chunk([], { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 })
+      const inputTokens = options.inputTokens ?? 11
+      chunk([], { prompt_tokens: inputTokens, completion_tokens: 7, total_tokens: inputTokens + 7 })
       res.end("data: [DONE]\n\n")
     }
-    if (!prompt.includes("SLOW_RESPONSE")) return finish()
+    if (!prompt.includes("SLOW_RESPONSE") && (slowRoleSeen || id !== options.slowFirstRole)) return finish()
+    slowRoleSeen = true
     res.write(": started\n\n")
     const timer = setInterval(() => res.write(": ping\n\n"), 100)
     const closed = once(res, "close").then(() => !res.writableEnded)
@@ -101,7 +107,12 @@ export async function startHost(t, syntheticReply, plugin = false) {
     if (coding) {
       delete env.GOAT_TEXT_PROVIDER
       Object.assign(env, { GOAT_LIVE_PROFILE: "coding", GOAT_TEXT_CONVERSATION: "1", GOAT_CODE_MANIFEST: join(root, "task.json") })
-      await cp(new URL("./live-task.json", import.meta.url), env.GOAT_CODE_MANIFEST)
+      if (multi) {
+        const keys = generateKeyPairSync("ed25519")
+        await signProject(env, { project: fileURLToPath(new URL("./example-project", import.meta.url)),
+          edit: ["labels.py", "normalize.py"], test: ["test_labels.py"], instruction: options.instruction, step: options.step },
+          keys.privateKey, keys.publicKey.export({ type: "spki", format: "pem" }))
+      } else await cp(new URL("./live-task.json", import.meta.url), env.GOAT_CODE_MANIFEST)
     }
   }
   const config = {
@@ -118,7 +129,7 @@ export async function startHost(t, syntheticReply, plugin = false) {
         models: id === "owner-lab" ? { manager: {}, implementer: {} } : { reviewer: {} },
       }]))) },
     agents: { bounded: { model: "fixture/mock", steps: 3 }, ...(plugin && { "goat-local-text": { steps: 1, permissions: deny } }),
-      ...(coding && codingAgents), ...(plugin === "conversation" && { build: codingAgents.build }) },
+      ...(coding && (multi ? projectAgents : codingAgents)), ...(plugin === "conversation" && { build: codingAgents.build }) },
   }
   await writeFile(env.OPENCODE_CONFIG, JSON.stringify(config))
   // Stateless generation does not take a project location. Supply the same

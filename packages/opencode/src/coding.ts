@@ -7,9 +7,9 @@ import { isDeepStrictEqual } from "node:util"
 import { fileURLToPath } from "node:url"
 
 const helper = fileURLToPath(new URL("./check-python.py", import.meta.url))
-function sandbox(input: unknown, signal?: AbortSignal): Promise<unknown> {
+export function sandbox(input: unknown, signal?: AbortSignal, cwd = "/"): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    const child = execFile("/usr/bin/python3", ["-ISB", helper], { env: {}, cwd: "/", signal,
+    const child = execFile("/usr/bin/python3", ["-ISB", helper], { env: {}, cwd, signal,
       timeout: 3000, killSignal: "SIGKILL", maxBuffer: 16384 }, (error, stdout) => {
       if (error) return reject(Error("Sandbox or Python check failed"))
       try { resolve(JSON.parse(stdout)) } catch { reject(Error("Invalid function output")) }

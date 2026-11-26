@@ -92,6 +92,7 @@ export type TaskAnalysis = {
 }
 
 export type ManagerReasoner = {
+  planSteps?: (intent: OriginalIntent) => readonly string[] | Promise<readonly string[]>
   analyzeTask?: (task: TaskSpecification, intent: OriginalIntent) => TaskAnalysis | Promise<TaskAnalysis>
 }
 

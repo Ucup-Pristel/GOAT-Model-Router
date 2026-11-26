@@ -146,7 +146,10 @@ export async function decideTask(request: TaskDecisionRequest): Promise<TaskDeci
   if (request.config.mode === "standard") {
     tasks = planStandard(intent, request.userPlan ?? intent.userPlan).tasks
   } else {
-    const detailed = planResinkDetailed(intent, request.userPlan ?? intent.userPlan)
+    const steps = !intent.userPlan?.length ? await request.reasoner?.planSteps?.(intent) : undefined
+    if (steps && (!Array.isArray(steps) || !steps.length || steps.length > 4 ||
+      steps.some(s => typeof s !== "string" || !s.trim() || s.length > 512))) throw Error("Invalid Manager plan")
+    const detailed = planResinkDetailed(intent, request.userPlan ?? intent.userPlan, steps)
     plan = detailed.plan
     planningFindings.push(...detailed.findings)
     if (!detailed.plan) {

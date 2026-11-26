@@ -94,12 +94,5 @@ test("OpenCode native controls (local provider; no GOAT dispatcher)", { timeout:
   t.diagnostic(`All requests at the separate native-control provider: ${calls.length}`)
 })
 
-// Keep absent end-to-end contracts visible in TAP; host probes are not passes
-// for a GOAT feature. Replace a skip with its assertions when the boundary exists.
-for (const [id, missing] of Object.entries({
-  T2: "owner-authorized dispatcher and denial trace",
-  T3: "owner credential verification at dispatch", T4: "native child tier dispatch (root tier routing covered by plugin RPC)",
-  T9: "pipeline budget stop after observed overshoot", T10: "protected trace", T11: "scoped evidence-file reads (deny-all text Auditor covered)",
-  T14: "dispatcher depth enforcement",
-  T15: "in-flight mutation detection", T16: "owner check following saved allow", T17: "worker-scoped worktree",
-})) test.skip(`${id} BLOCKED: ${missing}`, () => {})
+// T2–T4, T9–T11 and T14–T17 run through the signed project dispatcher in
+// plugin.test.mjs. The native-only controls above are not substitutes.

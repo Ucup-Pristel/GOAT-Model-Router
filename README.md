@@ -4,7 +4,7 @@ Open-source, model-agnostic orchestration plugin for OpenCode V2. Task 1 provide
 
 On a conversation-enabled local mock host, the primary Build agent can run a verified text task from an ordinary prompt after `/goat on`. It uses the same dispatcher as the explicit `dispatchText` RPC, with a deny-all Worker, a separate deny-all Auditor and at most one rework. See [activation and conversation evidence](docs/task-3-conversation.md) and the [RPC baseline](docs/task-3-plugin-integration.md).
 
-For the first owner-operated live coding test, see the [private Linux coding profile and exact launch instructions](docs/task-3-live-coding.md). It uses the configured Manager, Worker and Auditor, a disposable single-file workspace, and kernel-isolated Python function checks. Development verification used only the local mock.
+For project tasks, use the [signed multi-file Linux profile and Owner launch instructions](docs/task-3-project.md). It runs serial native child sessions against selected files in a disposable workspace. The [single-file profile](docs/task-3-live-coding.md) remains available and was accepted in an Owner-operated test with direct OpenAI.
 
 **Manager status:** the [historical Option A audit](docs/auditor-report-task-2-option-a.md) returned FAIL in all three rounds. The subsequent targeted repair on the orchestration branch addresses the two confirmed round-3 defects: original instruction risk masked by planning, and direct release/deploy actions mistaken for documentation. See the [scoped verification and Task 3 handoff](docs/manager-repair-and-task-3-handoff.md). Advisory readiness does not authorize worker dispatch.
 
@@ -36,7 +36,7 @@ Task 2 adds a read-only internal RPC, `decide`, for decision-layer and plugin co
 - Natural-language deploy/publish/release/ship/push detection is advisory only and is reported as structured `scopeFindings`; it never blocks a decision. The scan covers both the original instruction and each planned task objective, so a benign outcome, user plan, or Resink list does not by itself suppress a finding for recognized risky original text. Recognized direct `create`/`build`/`update` release, deploy, publish, ship, or push commands produce review findings. Runtime execution enforcement is a Task 3 responsibility.
 - Within a decision result, `readiness: "needs_review"` is required for intent ambiguity, high-risk tasks, or review-level scope findings; `"ready"` is accepted only when none of those are present. Detection remains heuristic: see the limitation below.
 - Missing or unavailable configured models are explicit errors; there is no silent fallback.
-- The `ManagerReasoner` interface defines the future model-backed analysis boundary, including an optional explicit tier. Task 2 uses deterministic planning and makes no model requests; model-generated plans are not accepted yet.
+- The project profile can use ordered steps from the configured Manager in Resink. A supplied Owner plan takes precedence; the Manager cannot replace the original instruction, file grant or verification suites.
 
 See `docs/task-2-manager.md` for contracts, policy assumptions, and limitations.
 

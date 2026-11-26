@@ -2,7 +2,8 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { setTimeout as delay } from "node:timers/promises"
 import { defaults } from "@goat/core"
-import { readFile } from "node:fs/promises"
+import { readFile, writeFile } from "node:fs/promises"
+import { dirname, join } from "node:path"
 import { createHash } from "node:crypto"
 import { deny, startHost } from "./host-fixture.mjs"
 
@@ -259,4 +260,216 @@ test("coding profile: scoped edit, isolated checks, independent receipt, unforce
     assert.equal(audits.at(-1).instruction, task.instruction)
   }
   t.diagnostic(`Coding HTTP requests at private mock: ${h.calls.length} (1 Manager omission, 6 invalid evidence, 10 successful rework)`)
+})
+
+const projectInstruction = "Normalize label whitespace with a shared helper and use it when producing labels."
+const normalized = 'def normalize(value):\n    return "-".join(value.lower().split())\n'
+const integrated = "from normalize import normalize\n\ndef label(value):\n    return normalize(value)\n"
+const ownerModel = modelID => ({ providerID: "owner-lab", modelID })
+const projectConfig = { ...defaults, enabled: true, models: { l1: ownerModel("implementer"), l2: ownerModel("implementer"),
+  l3: { providerID: "fixture", modelID: "senior" }, auditor: { providerID: "review-lab", modelID: "reviewer" } } }
+
+test("multi-file Worker: six native responses with three broker-confirmed refusals still reach checks and audit", async t => {
+  const read = path => ({ tool: "goat_task_file", args: { action: "read", path } })
+  const replace = (path, source) => ({ tool: "goat_task_file", args: { action: "replace", path, source } })
+  const script = [
+    [read("labels.py"), read("test_labels.py"), read("normalize.py")],
+    replace("normalize.py", normalized), replace("labels.py", integrated),
+    replace("test_labels.py", "should never be written"),
+    [read("normalize.py"), read("labels.py"), read("test_labels.py")],
+    "Updated the two assigned files.",
+  ]
+  let turns = 0
+  const h = await startHost(t, call => {
+    if (call.model === "implementer") return script[turns++]
+    assert.equal(call.model, "reviewer")
+    const p = JSON.parse(call.userText.split("\n").at(-1))
+    assert.deepEqual(p.evidence.results, [{ suite: "test_labels", count: 2, passed: true, failures: [] }])
+    return JSON.stringify({ taskId: p.taskId, attempt: p.attempt, criterion: p.criteria[0], reportSha256: p.reportSha256,
+      sha256: p.evidence.sha256, outcome: "PASS", riskReview: "Protected suite unchanged; both tests passed.", findings: [] })
+  }, "project", { instruction: projectInstruction })
+  const rpc = await readyRPC(h)
+  await rpc("setConfig", { config: projectConfig })
+  const sessionID = await h.session([], { agent: "build", model: { providerID: "owner-lab", id: "manager" } })
+  const result = await rpc("dispatchText", { sessionID, capability: h.capability, instruction: projectInstruction })
+  assert.equal(result.status, "completed", result.reason)
+  assert.equal(result.evidence.passed, true)
+  assert.equal(turns, 6)
+  const round = (await h.api(`session/${result.ids.worker}/context`)).filter(m => m.type === "assistant")
+  assert.equal(round.length, 6)
+  assert.equal(round.at(-1).finish, "stop")
+  const parts = round.flatMap(m => m.content.filter(p => p.type === "tool"))
+  assert.deepEqual(parts.map(p => p.state.status), ["completed", "completed", "error", "completed", "completed", "error", "completed", "completed", "error"])
+  assert.deepEqual(parts.filter(p => p.state.status === "error").map(p => p.state.error.message),
+    ["Assigned new file does not exist yet", "Assigned file is read-only", "Task file operation limit reached"])
+  assert.equal(await readFile(join(result.workspaceFile, "test_labels.py"), "utf8"),
+    await readFile(new URL("./example-project/test_labels.py", import.meta.url), "utf8"))
+  const rows = (await readFile(result.trace.path, "utf8")).trim().split("\n").map(JSON.parse)
+  assert.equal(rows.filter(r => r.event === "operation-denied").length, 3)
+  assert.deepEqual(rows.filter(r => r.event === "replace").map(r => r.path), ["normalize.py", "labels.py"])
+})
+
+for (const mode of ["standard", "resink"]) test(`signed multi-file ${mode}: serial plan, scoped evidence, reproducible rework and T10 trace`, { timeout: 60000 }, async t => {
+  const audits = []
+  const step = ["Create a whitespace normalization helper.", "Use the helper for label output."]
+  const h = await startHost(t, (call, { messages }) => {
+    const replies = messages.filter(m => m.role === "tool")
+    if (call.model === "manager") {
+      if (call.tools.includes("goat_verify_text")) return { tool: "goat_verify_text", args: mode === "resink" ? { steps: step } : {} }
+      const data = replies.at(-1).content
+      return JSON.parse(typeof data === "string" ? data : data.map(p => p.text).join("")).output
+    }
+    if (call.model !== "reviewer") {
+      if (replies.length) return "Edit submitted; no tests were run by the worker."
+      const helper = call.userText.includes("Assigned task: " + step[0])
+      const source = helper ? normalized : call.model === "senior" ? integrated : "def label(value):\n    return value\n"
+      return { tool: "goat_task_file", args: { action: "replace", path: helper ? "normalize.py" : "labels.py", source } }
+    }
+    if (!replies.length) return { tool: "goat_task_file", args: { action: "read", path: "test_labels.py" } }
+    assert.match(JSON.stringify(replies.at(-1)), /test_normalized_words/)
+    const p = JSON.parse(call.userText.split("\n").at(-1))
+    audits.push(p)
+    return JSON.stringify({ taskId: p.taskId, attempt: p.attempt, criterion: p.criteria[0], reportSha256: p.reportSha256,
+      sha256: p.evidence.sha256, riskReview: "Checked empty input and whitespace; no external dependencies.",
+      outcome: p.evidence.passed ? "PASS" : "FAIL", findings: p.evidence.passed ? [] :
+        [{ kind: "scoped-defect", taskId: "task-2", suite: "test_labels", detail: "label leaves whitespace unchanged" }] })
+  }, "project", { instruction: projectInstruction, step: mode === "standard" ? step : undefined })
+  const rpc = await readyRPC(h)
+  await rpc("setConfig", { config: { ...projectConfig, mode } })
+  const id = await h.session([], { agent: "build", model: { providerID: "owner-lab", id: "manager" } })
+  const dispatch = capability => rpc("dispatchText", { sessionID: id, instruction: projectInstruction, capability })
+  await t.test("T2/T3/T16: a saved always rule and forged capability cannot authorize dispatch", async () => {
+    const ask = { action: "read", resource: h.file, effect: "ask" }
+    await h.api(`session/${id}`, "PATCH", { permissions: [ask] })
+    const req = await h.api(`session/${id}/permission`, "POST", { action: "read", resources: [h.file], save: [h.file] })
+    assert.equal(req.effect, "ask")
+    await h.api(`session/${id}/permission/${req.id}/reply`, "POST", { decision: "always" })
+    assert.ok((await h.api("permission/saved")).some(r => r.resource === h.file))
+    assert.equal((await dispatch("GOAT_MODEL_ONLY_SYNTHETIC")).reason, "unauthorized")
+    const manifest = join(dirname(dirname(h.file)), "task.json")
+    const original = await readFile(manifest, "utf8")
+    const envelope = JSON.parse(original)
+    await writeFile(manifest, JSON.stringify({ ...envelope, payload: envelope.payload + " " }))
+    assert.equal((await dispatch(h.capability)).reason, "Invalid owner signature")
+    await writeFile(manifest, original)
+    await h.api(`session/${id}`, "PATCH", { permissions: [] })
+    assert.equal(h.calls.length, 0)
+    assert.equal((await h.api("session")).length, 1)
+  })
+  await h.prompt(id, projectInstruction)
+  await h.wait(id)
+  const round = await h.api(`session/${id}/context`)
+  const tool = round.flatMap(m => m.content ?? []).find(p => p.type === "tool" && p.name === "goat_verify_text")
+  assert.ok(tool?.state.status === "completed", JSON.stringify(round).slice(-6000))
+  const r = JSON.parse(tool.state.content[0].text)
+  assert.equal(r.status, "completed", JSON.stringify({ r, calls: h.calls.map(c => c.model), audits }))
+  assert.equal(r.checksPassed, true)
+  assert.match(r.output, /Verified: 1\/1 unittest suites passed/)
+  assert.equal(round.filter(m => m.type === "assistant").at(-1).content.at(-1).text, r.output)
+  assert.equal((await h.api(`session/${id}`)).outcome, "succeeded")
+  assert.equal(await readFile(join(r.file, "labels.py"), "utf8"), integrated)
+  assert.equal(await readFile(join(r.file, "normalize.py"), "utf8"), normalized)
+  assert.equal(audits.length, 2)
+  assert.deepEqual(audits[1].objectives.map(o => o.objective), step)
+  assert.equal(audits[1].instruction, projectInstruction)
+  assert.deepEqual(r.suites, [{ suite: "test_labels", count: 2, passed: true, failures: [] }])
+  assert.deepEqual(r.files.map(f => f.path), ["labels.py", "normalize.py"])
+  for (const f of r.files) assert.equal(createHash("sha256").update(await readFile(join(r.file,f.path))).digest("hex"), f.sha256)
+  const children = (await h.api("session")).filter(s => s.parentID === id)
+  assert.deepEqual(children.map(s => s.model.id).sort(), ["implementer", "implementer", "reviewer", "reviewer", "senior"])
+  assert.equal((await dispatch(h.capability)).status, "failed", "signed grant cannot be replayed")
+  const rows = (await readFile(r.trace.path, "utf8")).trim().split("\n").map(JSON.parse)
+  let head = ""
+  for (const { hash, ...body } of rows) {
+    assert.equal(body.previous, head)
+    head = createHash("sha256").update(JSON.stringify(body)).digest("hex")
+    assert.equal(hash, head)
+  }
+  assert.ok(rows.some(e => e.event === "terminal" && e.hash === r.trace.head))
+  assert.ok(rows.some(e => e.event === "authorization-denied"))
+  assert.equal(rows.filter(e => e.event === "checks").length, 3)
+  assert.equal(rows.filter(e => e.event === "read").length, 2)
+  assert.equal(rows.filter(e => e.event === "replace").length, 3)
+  assert.ok(r.observedRoleTokens > 0)
+})
+
+test("signed project native child controls", { timeout: 90000 }, async t => {
+  const models = { ...projectConfig.models, l1: { providerID: "fixture", modelID: "mock" },
+    l2: { providerID: "fixture", modelID: "middle" } }
+  for (const [scenario, tier, model] of [
+    ["T17 outside workspace", "L1", "mock"], ["T15 changed permissions", "L2", "middle"],
+    ["T9 observed overshoot", "L3", "senior"], ["T14 no recursive delegation", "L1", "mock"],
+    ["T11 Auditor scoped read only", "L2", "middle"], ["cancel on OFF", "L2", "middle"],
+  ]) await t.test(`${scenario}; T4 native ${tier}`, async st => {
+    const mutate = scenario.startsWith("T15"), audit = scenario.startsWith("T11")
+    const depth = scenario.startsWith("T14"), over = scenario.startsWith("T9"), cancel = scenario.startsWith("cancel")
+    const h = await startHost(st, (call, { messages }) => {
+      if (messages.some(m => m.role === "tool")) return "Finished."
+      if (audit) return call.model !== "reviewer" ? "Review the existing file." :
+        { tool: "goat_task_file", args: { action: "replace", path: "labels.py", source: "forbidden" } }
+      if (over) return "Check usage."
+      if (depth) {
+        assert.ok(!call.tools.includes("subagent"))
+        return { tool: "subagent", args: { prompt: "Delegate another task" } }
+      }
+      return { tool: "goat_task_file", args: { action: "read", path: h.outside } }
+    }, "project", { instruction: projectInstruction, slowFirstRole: mutate || cancel ? model : audit ? "reviewer" : null,
+      inputTokens: over ? 150000 : 11, attemptSubagent: depth })
+    const rpc = await readyRPC(h)
+    const id = await h.session([], { agent: "build", model: { providerID: "owner-lab", id: "manager" } })
+    const dispatch = sessionID => rpc("dispatchText", { sessionID, tier, capability: h.capability, instruction: projectInstruction })
+    const missing = { ...models }
+    delete missing[tier.toLowerCase()]
+    await rpc("setConfig", { config: { ...projectConfig, models: missing } })
+    assert.match((await dispatch(id)).reason, /Missing model assignment/)
+    assert.equal((await h.api("session")).length, 1)
+    assert.equal(h.calls.length, 0)
+    await rpc("setConfig", { config: { ...projectConfig, models } })
+    const arrived = (mutate || audit || cancel) && h.nextSlow()
+    const pending = dispatch(id)
+    if (arrived) {
+      const { finish } = await Promise.race([arrived, pending.then(r => { throw Error(JSON.stringify(r)) })])
+      try {
+        const child = (await h.api("session")).find(s => s.model?.id === (audit ? "reviewer" : model))
+        assert.equal(child.parentID, id)
+        if (cancel) await rpc("command", { input: "off" })
+        else if (mutate) await h.api(`session/${child.id}`, "PATCH", { permissions: [{ action: "*", resource: "*", effect: "allow" }] })
+        else for (const action of ["read","write","edit","shell","subagent"]) {
+          assert.equal((await h.api(`session/${child.id}/permission`, "POST", { action, resources: [h.outside] })).effect, "deny")
+        }
+      } finally { if (!cancel) finish() }
+    }
+    const result = await pending
+    assert.equal(result.status, cancel ? "cancelled" : "failed", JSON.stringify(result))
+    const child = await h.api(`session/${result.ids.worker}`)
+    assert.deepEqual([child.parentID, child.model.id, h.calls[0].model], [id, model, model])
+    const context = await h.api(`session/${child.id}/context`)
+    const trace = await readFile(result.trace.path, "utf8")
+    assert.doesNotMatch(JSON.stringify(context) + trace, /OUTSIDE_CANARY_CONTENT/)
+    if (cancel) {
+      assert.equal(child.outcome, "interrupted")
+      assert.match(trace, /"event":"cancel"/)
+      assert.equal(h.calls.length, 1)
+    }
+    if (scenario.startsWith("T17")) {
+      assert.equal(result.reason, "File tool result not confirmed by broker")
+      assert.ok(context.some(m => m.content?.some(p => p.type === "tool" && p.state.status === "error")))
+      assert.match(trace, /operation-denied/)
+    }
+    if (depth) {
+      assert.match((await dispatch(child.id)).reason, /depth/)
+      assert.equal((await h.api("session")).length, 2)
+    }
+    if (mutate) { assert.match(result.reason, /profile mismatch/); assert.match(trace,/binding-denied/) }
+    if (over) {
+      assert.match(result.reason, /token budget exceeded/)
+      assert.match(trace, /"budget-exceeded","observed":150007/)
+      assert.equal(h.calls.length, 1)
+    }
+    if (audit) {
+      const records = await h.api(`session/${result.ids.auditor}/context`)
+      assert.ok(records.some(m => m.content?.some(p => p.name === "goat_task_file" && p.state.status === "error")))
+      assert.match(trace, /operation-denied/)
+    } else assert.equal(result.ids.auditor, undefined)
+  })
 })

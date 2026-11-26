@@ -1,6 +1,6 @@
 # Task 3 — Uji coding pertama dengan model pilihan Owner
 
-**Verdict: siap untuk uji live terbatas oleh Owner; belum ada provider live yang dinyatakan lulus.** Jalur coding plugin nyata lulus di OpenCode 2.3.2 dengan provider HTTP mock. Sesi pengembangan utama tidak diaktifkan dan tidak ada request model berbayar. Perubahan ini tidak membuka akses tulis ke checkout pengguna.
+**MVP satu file diterima Owner di checkpoint `c19ce45`.** Pada OpenCode 2.4.2 dengan OpenAI langsung, Manager `gpt-6.1-sol`, Worker `gpt-5.6-terra`, dan Auditor `gpt-6-luna` menghasilkan `completed`, `checksPassed: true` dalam 20,4 detik. Owner memeriksa file dan mencocokkan SHA-256. Untuk profil proyek, gunakan [instruksi multi-file](task-3-project.md).
 
 ## Cara menjalankan
 
