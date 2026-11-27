@@ -233,7 +233,7 @@ export async function textRuntime(ctx: Plugin.Context) {
         if (!ref || ref !== auditor && ref !== manager && ref.modelID === auditor.modelID && ref.providerID === auditor.providerID) throw Error("Non-independent assignment")
         const m = models.find(m => m.providerID === ref.providerID && m.id === ref.modelID)
         if (!m || provider && ((m.package && m.package !== provider.package) || (m.settings?.baseURL ?? endpoint) !== endpoint) ||
-          live && ref !== auditor && !m.capabilities.tools) throw Error("Unavailable or incompatible role model")
+          live && ref !== auditor && !m.capabilities.tools) throw Error(`Unavailable or incompatible role model: ${ref.providerID}/${ref.modelID}. Select enabled models in /goat router; Manager and Workers need tool support.`)
       }
       if (task) {
         ws = await provision(task, signal)

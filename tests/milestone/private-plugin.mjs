@@ -65,6 +65,6 @@ export async function installPrivatePlugin(project) {
     const src = new URL(`../../packages/${name}/`, import.meta.url)
     await mkdir(dest, { recursive: true })
     await cp(new URL("package.json", src), join(dest, "package.json"))
-    await cp(new URL("src", src), join(dest, "src"), { recursive: true })
+    await cp(new URL("dist", src), join(dest, "dist"), { recursive: true })
   }
 }

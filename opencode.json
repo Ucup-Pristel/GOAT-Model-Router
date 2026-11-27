@@ -1,4 +1,4 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["./packages/opencode"]
+  "plugins": ["./dist/node_modules/@goat/opencode/"]
 }

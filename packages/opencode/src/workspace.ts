@@ -225,9 +225,9 @@ export async function installWorkspace(ctx: Plugin.Context, run: Run) {
   async function bind(sessionID:string, messageID:string, instruction:string) {
     const session = await ctx.session.get({sessionID})
     const cfg = await config()
-    if (cfg.mode !== "standard" || session.parentID || session.agent !== "build" || session.location.directory !== root) throw Error("Expected root Standard Build session")
+    if (cfg.mode !== "standard" || session.parentID || session.agent !== "build" || session.location.directory !== root) throw Error("For workspace edits, choose Standard in /goat mode and use a top-level Build session in this workspace.")
     const model = cfg.inheritManagerModel && session.model ? {providerID:session.model.providerID,modelID:session.model.id} : cfg.models.manager
-    if (!model || !cfg.models.l1 || !cfg.models.auditor) throw Error("Configure Manager, Worker and Auditor")
+    if (!model || !cfg.models.l1 || !cfg.models.auditor) throw Error("Open /goat router to select a Manager, Worker tiers and an independent Auditor before sending a workspace task.")
     const controller = new AbortController()
     const expires = Date.now()+360000
     const signal = AbortSignal.any([controller.signal,AbortSignal.timeout(360000)])
@@ -408,6 +408,9 @@ export async function installWorkspace(ctx: Plugin.Context, run: Run) {
             save:[resource],metadata:{root,files,verifiedSha256:result.evidence?.sha256}})
         },access)
         const receipt = {reason:verified ? `verified_${application.status}` : result.reason, application, file:result.workspaceFile,
+          summary: verified ? (application.status === "applied" ? "Protected checks and audit passed. Verified changes applied." :
+            "Staging passed checks and audit. Inspect application details before retrying checkout changes.") :
+            (!task.schedule!.tasks.some(t => t.suites.length) ? "No supported Python unittest suite. GOAT did not write to the checkout." : "Verification did not pass. GOAT did not write to the checkout."),
           verification:!task.schedule!.tasks.some(t => t.suites.length) ? "unsupported" : verified ? "passed" : "not_verified",
           authorization:{method:"opencode_permission",decisionSource:"not_reported",messageID:t.messageID},
           checksPassed:verified,suites:result.evidence?.results,sha256:result.evidence?.sha256,workers:result.workers,

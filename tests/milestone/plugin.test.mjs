@@ -108,7 +108,7 @@ test("Task 5 native workspace: discover, authorize, stage and audit on the paren
     if (unsupported) await writeFile(join(root,"src/calc.ts"),"// concurrent user edit\n")
     return JSON.stringify({taskId:p.taskId,attempt:p.attempt,criterion:p.criteria[0],outcome:"PASS",reportSha256:p.reportSha256,
       sha256:p.evidence.sha256,riskReview:"Checked protected test and change.",findings:[]})
-  }, "workspace", {timeout:25000})
+  }, "workspace", {timeout:25000, packed:true})
   const root = dirname(h.file)
   await mkdir(join(root,"src"))
   await writeFile(join(root,"AGENTS.md"),"UNRELATED_INSTRUCTION_CANARY")

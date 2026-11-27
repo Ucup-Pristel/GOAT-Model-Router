@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { spawn, execFileSync } from "node:child_process"
 import { once } from "node:events"
-import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { generateKeyPairSync, randomBytes } from "node:crypto"
 import { createServer } from "node:http"
 import { tmpdir } from "node:os"
@@ -27,6 +27,7 @@ export async function startHost(t, syntheticReply, plugin = false, options = {})
     XDG_CONFIG_HOME: join(root, "config"), XDG_DATA_HOME: join(root, "data"), XDG_CACHE_HOME: join(root, "cache"),
     XDG_STATE_HOME: join(root, "state"), HTTP_PROXY: "http://127.0.0.1:1", HTTPS_PROXY: "http://127.0.0.1:1",
     NO_PROXY: "localhost,127.0.0.1" }
+  if (options.registry) env.npm_config_registry = options.registry
   let host, exited
   // The offline host uses an empty cache. Use the installed native glob
   // helper (or system rg on PATH) without fetching a binary for the test.
@@ -106,8 +107,15 @@ export async function startHost(t, syntheticReply, plugin = false, options = {})
   provider.listen(0, "127.0.0.1")
   await once(provider, "listening")
   const endpoint = `http://127.0.0.1:${provider.address().port}/v1`
+  let pluginDirectory = "./.opencode/plugins/goat"
   if (plugin) {
-    await installPrivatePlugin(project)
+    if (options.packed) {
+      const prefix = join(root, "installed")
+      const { version } = JSON.parse(await readFile(new URL("../../package.json", import.meta.url)))
+      const archives = ["core", "opencode"].map(name => fileURLToPath(new URL(`../../dist/goat-${name}-${version}.tgz`, import.meta.url)))
+      execFileSync("npm", ["install", "--prefix", prefix, "--offline", "--no-audit", "--ignore-scripts", ...archives], { cwd: root, env })
+      pluginDirectory = join(prefix, "node_modules/@goat/opencode")
+    } else await installPrivatePlugin(project)
     if (plugin !== "workspace") Object.assign(env, {
       GOAT_TEXT_PROJECT: project, GOAT_TEXT_CAPABILITY: randomBytes(32).toString("hex"), GOAT_TEXT_PROVIDER: endpoint })
     if (plugin === "conversation") env.GOAT_TEXT_CONVERSATION = "1"
@@ -124,7 +132,7 @@ export async function startHost(t, syntheticReply, plugin = false, options = {})
     }
   }
   const config = {
-    ...(plugin && { plugins: ["./.opencode/plugins/goat"] }),
+    ...(plugin && { plugins: [pluginDirectory] }),
     ...(coding && { permissions: deny }),
     model: coding ? "owner-lab/manager" : "fixture/mock", update: "disable", warming: false,
     providers: { fixture: { package: "@opencode/ai/providers/openai-compatible",
@@ -192,7 +200,7 @@ export async function startHost(t, syntheticReply, plugin = false, options = {})
   const session = async (permissions = deny, extra = {}) => (await api("session", "POST", { model, title: "GOAT fixture", permissions, ...(plugin && { location: { directory: project } }), ...extra })).id
   const prompt = (id, text) => api(`session/${id}/prompt`, "POST", { text })
   const wait = id => api(`experimental/session/${id}/wait`, "POST")
-  return { api, session, prompt, wait, file, outside, calls, capability: env.GOAT_TEXT_CAPABILITY, nextSlow() {
+  return { api, session, prompt, wait, file, outside, calls, env, url, password: auth, capability: env.GOAT_TEXT_CAPABILITY, nextSlow() {
     slow = Promise.withResolvers()
     return slow.promise
   } }

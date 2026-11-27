@@ -1,6 +1,6 @@
 import { Plugin } from "@opencode/plugin"
 import { decideTask, defaults, modelStatus, validateConfig } from "@goat/core"
-import { Goat } from "@goat/opencode/rpc"
+import { Goat } from "./rpc.js"
 import { textRuntime } from "./text-runtime.js"
 import { workspaceBlock } from "./workspace.js"
 
@@ -35,8 +35,8 @@ export default Plugin.define({
         const validated = validateConfig(config)
         const previous = validateConfig(await ctx.storage.get("config") ?? defaults)
         if (JSON.stringify(previous.models) !== JSON.stringify(validated.models)) {
-          const available = (await ctx.model.list()).data
-          for (const model of Object.values(validated.models)) if (model && !available.some((candidate) => candidate.providerID === model.providerID && candidate.id === model.modelID)) throw new Error(`Unavailable model: ${model.providerID}/${model.modelID}`)
+          const available = (await ctx.model.list()).data.filter(model => model.enabled !== false)
+          for (const model of Object.values(validated.models)) if (model && !available.some((candidate) => candidate.providerID === model.providerID && candidate.id === model.modelID)) throw new Error(`Unavailable model: ${model.providerID}/${model.modelID}. Reopen /goat router and select an enabled model.`)
         }
         await ctx.storage.set("config", validated)
         if (JSON.stringify(previous) !== JSON.stringify(validated)) dispatchText.cancel()
@@ -44,7 +44,7 @@ export default Plugin.define({
       },
       listModels: async () => {
         const [models, providers] = await Promise.all([ctx.model.list(), ctx.provider.list()])
-        return { models: models.data.map((model) => ({ providerID: model.providerID, modelID: model.id, name: model.name, providerName: providers.data.find((provider) => provider.id === model.providerID)?.name ?? model.providerID })) }
+        return { models: models.data.filter(model => model.enabled !== false).map((model) => ({ providerID: model.providerID, modelID: model.id, name: model.name, providerName: providers.data.find((provider) => provider.id === model.providerID)?.name ?? model.providerID })) }
       },
       command: async (input) => {
         const { input: text } = input as { input: string }
@@ -55,7 +55,7 @@ export default Plugin.define({
           config = { ...config, enabled: verb === "on" }
           await ctx.storage.set("config", config)
           if (verb === "off") dispatchText.cancel()
-          const profile = dispatchText.workspace ? workspaceBlock : "Use the configured private execution profile."
+          const profile = dispatchText.workspace ? `${workspaceBlock} Use /goat router to assign tool-capable Workers and a different Auditor, then select Standard in /goat mode and send a plain Build prompt.` : "Use the configured private execution profile."
           return { text: verb === "on" ? `GOAT ON. ${profile}` : "GOAT OFF." }
         }
         if (verb === "mode") {
@@ -64,14 +64,19 @@ export default Plugin.define({
           config = { ...config, mode }
           dispatchText.cancel()
           await ctx.storage.set("config", config)
-          return { text: `GOAT mode: ${mode}. Production dispatch disabled.` }
+          return { text: `GOAT mode: ${mode}.` }
         }
         if (verb === "status") {
           const latest = await ctx.storage.get("lastCodingTurn")
           const progress = dispatchText.status()
-          const available = (await ctx.model.list()).data.map((model) => ({ providerID: model.providerID, modelID: model.id }))
-          const profile = dispatchText.workspace ? workspaceBlock : "provisioned profiles only; production disabled"
-          return { text: `Enabled: ${config.enabled}\nMode: ${config.mode}\nManager: ${config.inheritManagerModel ? "inherit session model" : modelStatus(config.models.manager, available)}\nL1: ${modelStatus(config.models.l1, available)}\nL2: ${modelStatus(config.models.l2, available)}\nL3: ${modelStatus(config.models.l3, available)}\nAuditor: ${modelStatus(config.models.auditor, available)}\nOrchestration: ${profile}${progress ? `\nTask execution: ${JSON.stringify(progress)}` : ""}${latest ? `\nLast coding turn: ${JSON.stringify(latest)}` : ""}` }
+          const available = (await ctx.model.list()).data.filter(model => model.enabled !== false).map((model) => ({ providerID: model.providerID, modelID: model.id }))
+          const profile = dispatchText.workspace
+            ? (config.mode === "standard" ? workspaceBlock : "Select Standard in /goat mode for ordinary workspace edits.")
+            : "Private execution profile"
+          const activity = dispatchText.workspace && progress
+            ? `\nWorkspace: ${progress.status}. See the GOAT tool receipt for checks, applied files and conflicts.`
+            : progress ? `\nTask execution: ${JSON.stringify(progress)}` : ""
+          return { text: `Enabled: ${config.enabled}\nMode: ${config.mode}\nShared across locations loading GOAT in this OpenCode database.\nManager: ${config.inheritManagerModel ? "inherit session model" : modelStatus(config.models.manager, available)}\nL1: ${modelStatus(config.models.l1, available)}\nL2: ${modelStatus(config.models.l2, available)}\nL3: ${modelStatus(config.models.l3, available)}\nAuditor: ${modelStatus(config.models.auditor, available)}\nOrchestration: ${profile}${activity}${latest ? `\nLast coding turn: ${JSON.stringify(latest)}` : ""}` }
         }
         if (verb === "router") {
           return { text: "Use the interactive /goat router menu to configure models." }

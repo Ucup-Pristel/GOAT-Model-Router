@@ -1,99 +1,123 @@
 # GOAT Model Router
 
-Open-source, model-agnostic orchestration plugin for OpenCode V2. Task 1 provides the configuration/control plane. Task 2 adds the **Manager decision layer**: intent preservation, Standard/Resink planning policy, capability-tier routing, and worker prompt compilation.
+GOAT lets one OpenCode Build session delegate a scoped change to other models, test the result, and ask a separate model to review the evidence **before changing your checkout**. Use it when you want to choose which model plans, implements and reviews a task, and to see what actually passed. GOAT starts **OFF**.
 
-On a conversation-enabled local mock host, the primary Build agent can run a verified text task from an ordinary prompt after `/goat on`. It uses the same dispatcher as the explicit `dispatchText` RPC, with a deny-all Worker, a separate deny-all Auditor and at most one rework. See [activation and conversation evidence](docs/task-3-conversation.md) and the [RPC baseline](docs/task-3-plugin-integration.md).
+```text
+Your prompt in OpenCode Build
+            │
+            ▼
+  Manager: original intent + proposed file scope
+            │ OpenCode permissions
+            ▼
+  Portable core: route → schedule ready Workers (L1 / L2 / L3)
+            │                    │ scoped edits in staging
+            ▼                    ▼
+  Protected tests ──────► independent Auditor
+                                │ bounded rework or verified result
+                                ▼
+  OpenCode: apply permission → conflict check → checkout + receipt
+```
 
-For project tasks, use the [signed parallel project profile and Owner launch instructions](docs/task-4-parallel.md). An explicit signed schedule allows independent native Workers to run concurrently; [ordinary ordered project plans](docs/task-3-project.md) remain sequential. The [single-file profile](docs/task-3-live-coding.md) remains available and was accepted in an Owner-operated test with direct OpenAI.
+OpenCode is the first production adapter for the portable GOAT core. Your provider connections, OAuth, tools, permissions and child sessions belong to OpenCode. There is no GOAT account, daemon or separate API key.
 
-In a trusted Linux workspace, [Standard workspace execution](docs/task-5-workspace.md) accepts an ordinary Build prompt. The active OpenCode host handles model authentication, discovery tools, permissions and child sessions. After protected checks and independent audit pass, GOAT applies the permitted, verified changes to the checkout and reports any conflicts or partial writes. See the [Owner calculator test](docs/task-5-workspace.md#uji-live-oleh-owner).
+## Install
 
-**Manager status:** the [historical Option A audit](docs/auditor-report-task-2-option-a.md) returned FAIL in all three rounds. The subsequent targeted repair on the orchestration branch addresses the two confirmed round-3 defects: original instruction risk masked by planning, and direct release/deploy actions mistaken for documentation. See the [scoped verification and Task 3 handoff](docs/manager-repair-and-task-3-handoff.md). Advisory readiness does not authorize worker dispatch.
+**Candidate status:** the npm packages are not published. To try the candidate now, use the two local tarballs as described below. The registry commands are for use **after publication** under the approved names.
 
-GOAT defaults **OFF**. While OFF, the plugin exposes only the `/goat` TUI command and its RPC handlers; it does not run the decision pipeline, intercept normal prompts, create sessions, or call models.
-
-## Commands
-
-Exactly one public slash command is registered: `/goat`.
-
-| Command | Behavior |
+| Where to load GOAT | Native installation after publication |
 |---|---|
-| `/goat router` | Opens a provider/model picker for Manager, L1, L2, L3, and Auditor. Manager can inherit the current session model. |
-| `/goat mode` | Selects Standard or Resink. Standard disables Task Planner; Resink enables structured planning when a decision is requested. |
-| `/goat on` | Persists `enabled: true`. Does not start orchestration or execute a worker. |
-| `/goat off` | Persists `enabled: false`. Native OpenCode behavior remains unchanged. |
-| `/goat status` | Reports configuration, model availability, project task progress and verification status. |
+| All your OpenCode projects | Run `opencode plugin add @goat/opencode`. OpenCode installs the matching core and adds the plugin to your user configuration. |
+| Just one project | Append `"@goat/opencode@0.1.0"` to `plugins` in that project's `opencode.json(c)` or `.opencode/opencode.json(c)`. OpenCode resolves it for that project and its descendants. |
 
-OpenCode V2 TUI slash commands and server commands are separate. The TUI command calls a typed server RPC contract (`Rpc.define`) over `context.client.rpc(Goat)`; no duplicate server `/goat` command is registered. Settings are stored in plugin-scoped server storage, not global OpenCode configuration.
-
-Task 2 adds a read-only internal RPC, `decide`, for decision-layer and plugin compatibility tests. It is not a slash command and does not execute workers.
-
-## Manager decision layer
-
-- `OriginalIntent` preserves the original instruction exactly, plus constraints, prohibitions, user plan, acceptance criteria, ambiguities, and permission boundaries.
-- **Standard** never invokes the Task Planner. It preserves a user-supplied ordered plan or creates one task from the requested outcome.
-- **Resink** may create an ordered `TaskPlan` with dependencies when no user plan is supplied. An existing user plan is respected.
-- Routing selects L1, L2, or L3 from complexity, risk, and context signals, and accepts an explicit tier from the task, decision request, or manager reasoner. These are capability tiers, not job specializations.
-- Worker prompts contain objective, context, scope, deliverables, acceptance criteria, prohibitions, tool/permission restrictions, and reporting format.
-- Natural-language deploy/publish/release/ship/push detection is advisory only and is reported as structured `scopeFindings`; it never blocks a decision. The scan covers both the original instruction and each planned task objective, so a benign outcome, user plan, or Resink list does not by itself suppress a finding for recognized risky original text. Recognized direct `create`/`build`/`update` release, deploy, publish, ship, or push commands produce review findings. Runtime execution enforcement is a Task 3 responsibility.
-- Within a decision result, `readiness: "needs_review"` is required for intent ambiguity, high-risk tasks, or review-level scope findings; `"ready"` is accepted only when none of those are present. Detection remains heuristic: see the limitation below.
-- Missing or unavailable configured models are explicit errors; there is no silent fallback.
-- The project profile can use ordered steps from the configured Manager in Resink. A supplied Owner plan takes precedence; the Manager cannot replace the original instruction, file grant or verification suites.
-
-See `docs/task-2-manager.md` for contracts, policy assumptions, and limitations.
-
-## Requirements
-
-- Node.js 22.19+ (verified with 22.22.1)
-- npm 10+
-- OpenCode V2 `2.3.2` (regression baseline), `2.4.1`, or `2.4.2`. The development SDK remains pinned to `2.3.2`. See the [verified host matrix](docs/task-3-opencode-compat.md).
-
-## Local checks
+For the **unpublished candidate**, place both archives in the same directory. From that directory on Linux:
 
 ```sh
-npm install
-npm run check
-npm test
+install_dir="${XDG_DATA_HOME:-$HOME/.local/share}/goat-candidates/0.1.0"
+npm install --offline --ignore-scripts --no-audit --prefix "$install_dir" \
+  "$PWD/goat-core-0.1.0.tgz" "$PWD/goat-opencode-0.1.0.tgz"
+printf '%s\n' "$install_dir/node_modules/@goat/opencode"
 ```
 
-To reproduce the Manager re-audit and native host probes with a local mock provider,
-run `npm run audit:milestone` with OpenCode 2.4.2 (set `GOAT_TEST_VERSION` for a supported older host). See the [original reproductions and host setup](docs/manager-and-host-reaudit.md)
-and the [post-repair results and remaining skips](docs/manager-repair-and-task-3-handoff.md).
+Append the **printed absolute directory** as one entry in `plugins`. For global use, edit `${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json(c)`; for project-only use, edit the project config above. Keep the existing entries, comments and all other settings. If `plugins` is absent, add that field. Do not copy provider credentials, replace a config file, or install both ways. OpenCode loads the server, terminal UI and RPC contract from the one entry. A `.tgz` is not itself a native plugin directory.
 
-## Isolated plugin loading
+## Quick start
 
-Do not install globally. In a disposable OpenCode project, copy this repository's `packages/opencode` directory to a real directory such as `.opencode/plugins/goat`, then add it to that project's `opencode.jsonc`:
+1. Open a trusted Linux workspace in the **OpenCode terminal UI**. Choose **Build** and a tool-capable model from your existing provider connection.
+2. Run `/goat status`. With fresh plugin storage it shows `Enabled: false`, `Mode: standard`, Manager inherited, other roles unconfigured.
+3. Open `/goat router`. Keep **Inherit current session model** or select a Manager. Select L1, L2, L3 and an Auditor different from every Worker. The picker saves after the last selection; cancelling leaves the previous assignments in place.
+4. Choose **Standard** in `/goat mode`, then `/goat on`. Send a plain prompt. Review the proposed files, tests, model destinations and permissions before approving.
+5. Inspect the `goat_verify_text` tool receipt, then `/goat off` when finished.
 
-```jsonc
-{
-  "plugins": ["./.opencode/plugins/goat"]
-}
-```
+### Five commands
 
-The plugin directory must be real, not a symlink. `@goat/core` and `@goat/opencode` must resolve from the isolated project, and `@opencode/plugin` must resolve from the plugin directory. Start the host with isolated `HOME`, `XDG_CONFIG_HOME`, and `OPENCODE_CONFIG` so no user-level OpenCode configuration is touched.
+| Command | Result |
+|---|---|
+| `/goat router` | Pick enabled provider/model pairs for the five roles. |
+| `/goat mode` | Choose Standard or Resink. |
+| `/goat on` | Save activation. No task starts until you submit a prompt. |
+| `/goat off` | Save deactivation and cancel work at this location. Subsequent ordinary prompts bypass GOAT. |
+| `/goat status` | See activation, mode, assignments, unavailable models and execution state. |
 
-Verify `/goat status` in the real TUI, then exercise router, mode, on, and off. Keep credentials out of test fixtures. This repository does not modify global OpenCode configuration.
+**Installation scope and settings scope are different.** Project config controls *where the plugin loads*. On OpenCode 2.4.2 the roles, mode and ON/OFF flag are durable GOAT plugin storage in the host database. Changing them in one project affects other sessions and projects loading GOAT against that database. A new workspace does not reset GOAT to OFF. Separate host databases have separate settings. The picker does not edit `opencode.json` or store OAuth tokens.
 
-## Layout
+## Modes, roles and parallel work
 
-- `packages/core`: Manager policy and the shared execution engine: routing, scheduling, budgets, scoped snapshots, auditing and rework. See the [Task 6 architecture and Owner live test](docs/task-6-portable-core.md).
-- `packages/opencode`: reference host adapter for native sessions, permissions, workspace verification/write-back, RPC, storage and the `/goat` TUI.
-- `docs/architecture.md`: architecture, contracts, policies, safeguards, and roadmap.
-- `docs/task-2-manager.md`: Task 2 decision contracts, routing policy, prompt compiler, and integration boundary.
-- `docs/task-1a-preflight.md`: Task 1 host integration evidence, RPC root-cause fix, and dependency audit.
-- `docs/auditor-report.md`: Task 1 independent Auditor verdicts.
-- `docs/auditor-report-task-2.md`: historical Task 2 Auditor verdict (FAIL) that motivated the Option A redesign.
-- `docs/auditor-report-task-2-option-a.md`: independent Auditor verdicts for the Option A redesign, including round 1 FAIL and the re-audit.
-- `docs/scope-redesign-verification.md`: implementation self-verification for Option A (not a substitute for an independent audit).
+**Standard** keeps the user's ordered plan, or starts from one objective. It does not invent a list of implementation steps. **Resink** allows the Manager to propose steps when no user plan exists; a supplied plan takes priority. Resink is supported by the decision layer and the existing provisioned project profile. Ordinary workspace execution requires Standard.
 
-## Current limitations
+The core preserves `OriginalIntent` (the exact instruction, constraints and acceptance criteria). Tiers describe **capability**, not professions or permissions:
 
-- Task 2 does not route work to a running worker, create sessions, or invoke worker/auditor models.
-- Ordinary workspace dispatch requires Standard, Build, supported models and native permission for the task scope. Checkout application also requires native `edit`/`write` permissions and `goat_apply` for the verified change set. The signed private Task 3/4 profiles remain available.
-- Standard and Resink retain their Manager policies. The isolated RPC executes only a single ready task with a supported verifier.
-- Natural-language scope and heading heuristics are advisory. They can produce false positives or miss a phrasing; `scopeFindings` is not a security boundary.
-- `readiness: "needs_review"` prevents the decision from being declared dispatch-ready, but Task 2 never dispatches; Task 3 must enforce permissions and scope at execution time.
-- The deterministic routing policy is an initial explainable baseline; live model-backed Manager reasoning is a future integration boundary.
-- Model assignments are validated against the live provider inventory when saved; status flags models that later become unavailable.
-- Configuration storage is scoped to the plugin installation/location, not synchronized across projects.
-- 24 moderate dependency advisories remain in the pinned SDK graph; no forced upgrades were applied. See `docs/task-1a-preflight.md`.
+| Role | What to look for |
+|---|---|
+| Manager | Planning, reasoning, delegation and routing. Choose a model that can discover files and propose a narrow scope. |
+| L1 | Inexpensive, fast tool use for straightforward edits. |
+| L2 | Capable coding and debugging for changes needing more context. |
+| L3 | Strong reasoning and complex implementation, including bounded escalation. |
+| Auditor | Strong independent verification and critical reasoning; evaluates test evidence rather than trusting a Worker report. |
+
+The dynamic Worker pool starts only tasks whose dependencies have completed. In Standard, multiple objectives follow the user's order unless the request authorizes independent work. Conflicting scopes are rejected. Up to four tasks can share a run, with at most three Workers active at once. Request budgets are shared, not multiplied per Worker. A reproducible defect can trigger one bounded rework round, including affected dependents. A failed audit is not permission to write.
+
+### Example model assignments
+
+Suggestions as of **28 November 2026**. These model IDs and tool support were checked in the [public model catalog](https://models.dev/); your OpenCode picker is authoritative for your account. They are starting points, **not benchmarks or cost-saving claims**. In the table, GPT models are under `openai`, Claude models under `anthropic`.
+
+| Example | Manager | L1 | L2 | L3 | Auditor |
+|---|---|---|---|---|---|
+| Budget | gpt-5.4-mini | gpt-5.4-nano | gpt-5.4-mini | gpt-5.4 | claude-sonnet-4-6 |
+| Balanced | gpt-5.4 | gpt-5.4-mini | claude-sonnet-4-6 | gpt-5.4 | claude-opus-4-7 |
+| Performance | gpt-6.1-sol | gpt-5.4-mini | gpt-5.4 | gpt-6.1-sol | claude-opus-4-7 |
+
+All assignments are manual. One provider is enough if it offers distinct suitable models. Inverting tiers can spend more on simple work and send escalation to a weaker model. A weak Auditor may miss a defect or reject a valid change. A second model is not proof of correctness. Missing, disabled or incompatible assignments can block execution; GOAT does not rank models or silently substitute another.
+
+## Example: repair a calculator
+
+In a project with `src/calc.py` and an existing `test_calc.py`, ask: **“Fix the calculator so it passes its existing tests. Do not change the tests.”** The Manager can discover the paths with native `glob` and `read`. Review `goat_workspace`: the implementation should be writable, the suite read-only. Workers edit staging; the Auditor reviews the evidence. On `goat_apply`, check the exact targets before granting permission.
+
+Look for `checksPassed: true`, `reason: verified_applied`, and `application.applied` containing `src/calc.py`. Passing tests in staging alone does not mean your checkout changed. If `conflicts`, `unapplied` or `uncertain` is non-empty, inspect the files and receipt before retrying.
+
+## Support and trust boundaries
+
+- **Distribution target tested:** native OpenCode **2.4.2** on Linux x86-64, including the terminal in VSCodium. No GUI command registration. Earlier adapter regression coverage on 2.3.2 and 2.4.1 is [documented separately](docs/task-3-opencode-compat.md); the package lifecycle gate targets 2.4.2.
+- **Ordinary workspace verifier:** bounded, protected Python `unittest` suites, `/usr/bin/python3`, `/proc`, Landlock ABI ≥3 and `libseccomp.so.2`. OpenCode `glob` needs its ripgrep helper. The helper recognizes Linux x86-64 and aarch64; this package was not tested on ARM. macOS and Windows verified execution/write-back are not supported.
+- **Other profiles:** private regression profiles cover deterministic text, a single Python function and signed multi-file Python projects, including parallel schedules. They are not prerequisites for installation. Other text files can be staged; an unsupported suite does not verify a change or authorize write-back.
+- Install only trusted plugins in trusted workspaces. A server plugin runs with your user's access. Approved content goes to the selected providers. File limits, restricted tools and secret-pattern checks do not detect every sensitive value. Natural-language scope findings are advisory.
+- Verification is evidence for the assigned tests, not a guarantee about every behavior. The Linux write helper rechecks scope and file contents; a multi-file change is not atomic. Unsupported filesystems, changed inputs, cancellation or denied permissions can leave staged or partially applied work. Inspect the receipt; GOAT does not roll back over another editor's changes.
+
+## Troubleshooting
+
+| Symptom | What to check |
+|---|---|
+| No `/goat` | Use the OpenCode TUI. Check `opencode plugin list` or the configured local package directory, and the server log for the exact `err_…` reference. For Flatpak use `$XDG_DATA_HOME/opencode/log/opencode.log` from that terminal. A server-only client has no TUI slash menu. |
+| `Export named 'digest' not found` during development | Rebuild/install **both** packages with `npm run pack:candidate`. The development config points to this installed pair. A long-lived loader can retain unwatched workspace dependencies. If a fresh `opencode --standalone` loads the pair but the shared service is stale, restart that service when idle. No cache or database deletion is required. |
+| HTTP error or unavailable model | Check `/goat status`, the host log reference and the active Build provider. Choose enabled, tool-capable Manager/Workers and a different Auditor in `/goat router`. Use a plain top-level Build prompt in Standard. `/goat off` restores ordinary prompting. |
+| No verified result | Check the actual tool receipt. A Manager reply without the GOAT tool is not a verification. Check the proposed scope, permission decision, supported suite and host prerequisites. `unsupported` means checkout write-back was not verified. |
+| Checks passed but the file is unchanged | Check `application.status` and `detail`. A denied apply or conflicting edit can prevent a write after tests passed. |
+
+## Update and uninstall
+
+For a global registry install, use `opencode plugin check`, then `opencode plugin update @goat/opencode`. For a project pinned to an exact version, change only that entry to the approved version. For local tarballs, install the new matched pair into a **new version directory**, then switch only the GOAT path. OpenCode watches its configuration.
+
+Before removal, use `/goat off` if you want reinstalls to start disabled. For a global registry entry use `opencode plugin remove @goat/opencode` (use the exact configured specifier for a pin). For a project or local directory remove only its GOAT entry; the dedicated candidate directory can then be discarded if no configuration uses it. Unloading a plugin is not a reset of its saved settings. Keep the host database, providers, credentials, MCP entries, other plugins and permissions.
+
+## Further reading
+
+[Architecture](docs/architecture.md) · [Portable core and host boundary](docs/task-6-portable-core.md) · [Workspace verification and write-back](docs/task-5-workspace.md) · [Parallel orchestration](docs/task-4-parallel.md) · [Packaging, development checks, license review and Owner test](docs/task-7-packaging.md) · [Historical milestone reports](docs/)

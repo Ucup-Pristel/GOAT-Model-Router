@@ -1,1 +1,17 @@
-{"name":"@goat/opencode","version":"0.1.0","type":"module","exports":{".":"./src/index.ts","./tui":"./src/tui.ts","./rpc":"./src/rpc.ts"},"files":["src"],"dependencies":{"@goat/core":"0.1.0","@opencode/plugin":"2.3.2"}}
+{
+  "name": "@goat/opencode",
+  "version": "0.1.0",
+  "description": "GOAT Model Router for native OpenCode sessions",
+  "repository": { "type": "git", "url": "git+https://github.com/Ucup-Pristel/GOAT-Model-Router.git", "directory": "packages/opencode" },
+  "publishConfig": { "access": "public" },
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.js",
+    "./tui": "./dist/tui.js",
+    "./rpc": "./dist/rpc.js"
+  },
+  "files": ["dist"],
+  "dependencies": { "@goat/core": "0.1.0" },
+  "peerDependencies": { "@opencode/plugin": "2.3.2 || 2.4.1 || 2.4.2" },
+  "peerDependenciesMeta": { "@opencode/plugin": { "optional": true } }
+}
