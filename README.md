@@ -4,7 +4,7 @@ Open-source, model-agnostic orchestration plugin for OpenCode V2. Task 1 provide
 
 On a conversation-enabled local mock host, the primary Build agent can run a verified text task from an ordinary prompt after `/goat on`. It uses the same dispatcher as the explicit `dispatchText` RPC, with a deny-all Worker, a separate deny-all Auditor and at most one rework. See [activation and conversation evidence](docs/task-3-conversation.md) and the [RPC baseline](docs/task-3-plugin-integration.md).
 
-For project tasks, use the [signed multi-file Linux profile and Owner launch instructions](docs/task-3-project.md). It runs serial native child sessions against selected files in a disposable workspace. The [single-file profile](docs/task-3-live-coding.md) remains available and was accepted in an Owner-operated test with direct OpenAI.
+For project tasks, use the [signed parallel project profile and Owner launch instructions](docs/task-4-parallel.md). An explicit signed schedule allows independent native Workers to run concurrently; [ordinary ordered project plans](docs/task-3-project.md) remain sequential. The [single-file profile](docs/task-3-live-coding.md) remains available and was accepted in an Owner-operated test with direct OpenAI.
 
 **Manager status:** the [historical Option A audit](docs/auditor-report-task-2-option-a.md) returned FAIL in all three rounds. The subsequent targeted repair on the orchestration branch addresses the two confirmed round-3 defects: original instruction risk masked by planning, and direct release/deploy actions mistaken for documentation. See the [scoped verification and Task 3 handoff](docs/manager-repair-and-task-3-handoff.md). Advisory readiness does not authorize worker dispatch.
 
@@ -20,7 +20,7 @@ Exactly one public slash command is registered: `/goat`.
 | `/goat mode` | Selects Standard or Resink. Standard disables Task Planner; Resink enables structured planning when a decision is requested. |
 | `/goat on` | Persists `enabled: true`. Does not start orchestration or execute a worker. |
 | `/goat off` | Persists `enabled: false`. Native OpenCode behavior remains unchanged. |
-| `/goat status` | Reports persisted state, mode, role assignments, and model availability. |
+| `/goat status` | Reports configuration, model availability, project task progress and verification status. |
 
 OpenCode V2 TUI slash commands and server commands are separate. The TUI command calls a typed server RPC contract (`Rpc.define`) over `context.client.rpc(Goat)`; no duplicate server `/goat` command is registered. Settings are stored in plugin-scoped server storage, not global OpenCode configuration.
 
@@ -55,7 +55,7 @@ npm test
 ```
 
 To reproduce the Manager re-audit and native host probes with a local mock provider,
-run `npm run audit:milestone` with OpenCode 2.3.2. See the [original reproductions and host setup](docs/manager-and-host-reaudit.md)
+run `npm run audit:milestone` with OpenCode 2.4.2 (set `GOAT_TEST_VERSION` for a supported older host). See the [original reproductions and host setup](docs/manager-and-host-reaudit.md)
 and the [post-repair results and remaining skips](docs/manager-repair-and-task-3-handoff.md).
 
 ## Isolated plugin loading

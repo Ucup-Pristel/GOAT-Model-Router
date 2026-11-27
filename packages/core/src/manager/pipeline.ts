@@ -70,6 +70,7 @@ export type TaskDecisionRequest = {
   readonly reasoner?: ManagerReasoner
   readonly intentId?: string
   readonly tier?: CapabilityTier
+  readonly assignments?: readonly { objective: string; tier?: CapabilityTier; criteria: readonly string[]; dependsOn: readonly string[] }[]
 }
 
 function verificationFor(task: TaskSpecification, intent: OriginalIntent): VerificationRequirements {
@@ -99,6 +100,7 @@ const decisionRequestKeys = [
   "reasoner",
   "intentId",
   "tier",
+  "assignments",
 ]
 
 export async function decideTask(request: TaskDecisionRequest): Promise<TaskDecisionResult> {
@@ -179,11 +181,21 @@ export async function decideTask(request: TaskDecisionRequest): Promise<TaskDeci
   if (request.tier !== undefined) {
     tasks = tasks.map((task) => validateTaskSpecification({ ...task, tier: request.tier }))
   }
+  if (request.assignments) {
+    const assignments = request.assignments
+    if (tasks.length !== assignments.length || tasks.some((t,i) => t.objective !== assignments[i].objective)) {
+      throw Error("Planned objectives do not match signed scopes")
+    }
+    tasks = tasks.map((t,i) => validateTaskSpecification({ ...t, tier: assignments[i].tier ?? t.tier,
+      acceptanceCriteria: unique([...t.acceptanceCriteria, ...assignments[i].criteria]) }))
+  }
   const extraCriteria = plan?.acceptanceCriteria ?? []
   tasks = tasks.map((task) => normalizeTask(intent, task, extraCriteria))
   if (plan) {
     plan = validateTaskPlan({
       ...plan,
+      ...(request.assignments && { dependencies: request.assignments.flatMap((t,i) =>
+        t.dependsOn.map(from => ({ from, to: tasks[i].id, reason: "signed Owner dependency" }))) }),
       tasks,
       acceptanceCriteria: unique([...plan.acceptanceCriteria, ...intent.acceptanceCriteria]),
     })
@@ -234,7 +246,7 @@ export async function decideTask(request: TaskDecisionRequest): Promise<TaskDeci
       decisionSource: request.reasoner?.analyzeTask ? "manager_reasoner" : "deterministic",
     }
     decisions.push(decision)
-    const upstream = (plan?.dependencies ?? [])
+    const upstream = request.assignments?.[prompts.length].dependsOn ?? (plan?.dependencies ?? [])
       .filter((dependency) => dependency.to === task.id)
       .map((dependency) => `${dependency.from}: ${dependency.reason}`)
     prompts.push(compileWorkerPrompt(task, decision.tier, intent, upstream))

@@ -9,7 +9,7 @@ import { parseArgs } from "node:util"
 import { checkVersion, codingAgents, projectAgents, signProject, deny, installPrivatePlugin } from "./private-plugin.mjs"
 
 const { positionals: [providerFile, taskFile], values: options } = parseArgs({ allowPositionals: true,
-  options: { project: { type: "string" }, instruction: { type: "string" }, ...Object.fromEntries(
+  options: { project: { type: "string" }, instruction: { type: "string" }, schedule: { type: "string" }, ...Object.fromEntries(
     ["edit", "read", "test", "step"].map(k => [k, { type: "string", multiple: true }])) } })
 const binary = process.env.OPENCODE_BIN
 if (!providerFile || !isAbsolute(binary ?? "") || process.platform !== "linux") {
@@ -42,6 +42,11 @@ await installPrivatePlugin(project)
 let instruction
 if (options.project) {
   if (taskFile) throw Error("Use either --project or a single-file manifest")
+  if (options.schedule) {
+    if (options.step) throw Error("Use --schedule or ordered --step, not both")
+    options.schedule = JSON.parse(await readFile(options.schedule, "utf8"))
+    options.step = options.schedule.tasks.map(t => t.objective)
+  }
   if (execFileSync("/usr/bin/python3", ["-ISB", fileURLToPath(probe)], { cwd: root, env: {}, input: '{"suite":null}', encoding: "utf8" }) !== '"isolated"') {
     throw Error("Project test isolation unavailable")
   }

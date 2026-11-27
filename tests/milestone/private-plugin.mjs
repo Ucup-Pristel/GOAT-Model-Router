@@ -51,7 +51,7 @@ export async function signProject(env, options, privateKey, publicKey) {
     throw Error("Project launch needs --instruction, --edit and --test")
   }
   const payload = JSON.stringify({ location: env.GOAT_TEXT_PROJECT, instruction: options.instruction,
-    expires: Date.now() + 3600000, files, userPlan: options.step })
+    expires: Date.now() + 3600000, files, userPlan: options.step, schedule: options.schedule })
   const signature = sign(null, Buffer.from(payload), privateKey)
   if (!verify(null, Buffer.from(payload), publicKey, signature)) throw Error("Owner key mismatch")
   await writeFile(env.GOAT_CODE_MANIFEST, JSON.stringify({ payload, signature: signature.toString("base64") }), { flag: "wx", mode: 0o600 })

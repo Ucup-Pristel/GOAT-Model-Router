@@ -52,7 +52,9 @@ export async function startHost(t, syntheticReply, plugin = false, options = {})
         if (coding) assert.ok(call.tools.every(name => ["goat_task_file", "goat_verify_text", "skill"].includes(name)))
         else if (plugin !== "conversation") assert.equal(tools.length, 0, "synthetic sessions must not advertise tools")
         else assert.ok(call.tools.every(name => ["goat_verify_text", "skill"].includes(name)))
-        text = syntheticReply(call, { messages, tool_choice })
+        call.start = performance.now()
+        res.once("finish", () => { call.end = performance.now() })
+        text = await syntheticReply(call, { messages, tool_choice })
       } catch (error) {
         return res.writeHead(400).end(JSON.stringify({ error: { message: String(error) } }))
       }
@@ -92,7 +94,7 @@ export async function startHost(t, syntheticReply, plugin = false, options = {})
     await rm(root, { recursive: true, force: true })
   })
   const version = execFileSync(binary, ["--version"], { cwd: root, env, encoding: "utf8", timeout: 5000 }).trim()
-  checkVersion(version, process.env.GOAT_TEST_VERSION ?? "2.3.2")
+  checkVersion(version, process.env.GOAT_TEST_VERSION ?? "2.4.2")
   t.diagnostic(`Private test host: ${version}`)
   await mkdir(project)
   await writeFile(file, "LOCAL_FIXTURE\n")
@@ -110,7 +112,8 @@ export async function startHost(t, syntheticReply, plugin = false, options = {})
       if (multi) {
         const keys = generateKeyPairSync("ed25519")
         await signProject(env, { project: fileURLToPath(new URL("./example-project", import.meta.url)),
-          edit: ["labels.py", "normalize.py"], test: ["test_labels.py"], instruction: options.instruction, step: options.step },
+          edit: ["labels.py", "normalize.py"], test: ["test_labels.py"], instruction: options.instruction, step: options.step,
+          ...options.projectGrant },
           keys.privateKey, keys.publicKey.export({ type: "spki", format: "pem" }))
       } else await cp(new URL("./live-task.json", import.meta.url), env.GOAT_CODE_MANIFEST)
     }
@@ -160,7 +163,7 @@ export async function startHost(t, syntheticReply, plugin = false, options = {})
   async function api(path, method = "GET", body, directory = project) {
     const target = new URL(`${url}/api/${path}`)
     if (path === "model" || path === "plugin" || path.startsWith("rpc/")) target.searchParams.set("location[directory]", directory)
-    const res = await fetch(target, { method, signal: AbortSignal.timeout(12000),
+    const res = await fetch(target, { method, signal: AbortSignal.timeout(options.timeout ?? 12000),
       headers: { authorization: `Basic ${Buffer.from(`opencode:${auth}`).toString("base64")}`, "content-type": "application/json" },
       body: JSON.stringify(body) })
     if (!res.ok) assert.fail(`${method} ${path}: HTTP ${res.status} ${await res.text()}`)

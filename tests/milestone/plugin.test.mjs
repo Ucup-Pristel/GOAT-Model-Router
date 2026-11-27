@@ -6,6 +6,8 @@ import { readFile, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { createHash } from "node:crypto"
 import { deny, startHost } from "./host-fixture.mjs"
+import { fileURLToPath } from "node:url"
+import { execFileSync } from "node:child_process"
 
 async function readyRPC(h) {
   const rpc = async (method, input) => (await h.api(`rpc/goat.model-router/${method}`, "POST", { input })).output
@@ -268,6 +270,162 @@ const integrated = "from normalize import normalize\n\ndef label(value):\n    re
 const ownerModel = modelID => ({ providerID: "owner-lab", modelID })
 const projectConfig = { ...defaults, enabled: true, models: { l1: ownerModel("implementer"), l2: ownerModel("implementer"),
   l3: { providerID: "fixture", modelID: "senior" }, auditor: { providerID: "review-lab", modelID: "reviewer" } } }
+
+const palette = fileURLToPath(new URL("./parallel-project/", import.meta.url))
+const paletteInstruction = "Implement the three independent color channels and combine them in rgb()."
+const scheduleTemplate = JSON.parse(await readFile(join(palette, "schedule.json"), "utf8"))
+for (const scenario of ["sequential", "parallel", "mixed", "rolling", "conversation", "resink", "rework", "transitive", "cycle", "reference", "write/write",
+  "read/write", "budget", "unauthorized", "off", "invalid verdict", "auditor read quota"]) {
+  test(`Task 4 project: ${scenario}`, { timeout: 45000 }, async t => {
+    const schedule = structuredClone(scheduleTemplate)
+    const { tasks } = schedule
+    const paths = tasks.map(t => t.write[0])
+    if (scenario === "sequential") schedule.concurrency = 1
+    if (scenario === "cycle") tasks[0].dependsOn = ["task-4"]
+    if (scenario === "reference") tasks[0].dependsOn = ["task-0"]
+    if (scenario === "write/write") tasks[1].write = tasks[0].write
+    if (scenario === "read/write") tasks[0].read = tasks[1].write
+    if (scenario === "budget") schedule.maxRequests = 3
+    if (scenario === "mixed") { tasks[1].tier = "L2"; tasks[2].tier = "L3" }
+    if (scenario === "rolling") { tasks[3].dependsOn = ["task-1"]; tasks[3].read = ["red.py"] }
+    const transitive = scenario === "transitive", rework = transitive || scenario === "rework"
+    if (transitive) { tasks[1].dependsOn = ["task-1"]; tasks[3].dependsOn = ["task-2","task-3"] }
+    const step = tasks.map(t => t.objective)
+    const barrier = Promise.withResolvers(), arrived = Promise.withResolvers()
+    const fourth = Promise.withResolvers()
+    const first = [], audits = []
+    const models = { L1: "implementer", L2: "middle", L3: "senior" }
+    const conversation = scenario === "conversation" || scenario === "resink"
+    const h = await startHost(t, async (call, { messages }) => {
+      if (call.model === "manager") {
+        if (call.tools.includes("goat_verify_text")) return { tool: "goat_verify_text", args: scenario === "resink" ? { steps: step } : {} }
+        const result = messages.filter(m => m.role === "tool").at(-1).content
+        return JSON.parse(typeof result === "string" ? result : result.map(p => p.text).join("")).output
+      }
+      if (call.model === "reviewer") {
+        if (scenario === "auditor read quota") {
+          const read = path => ({ tool: "goat_task_file", args: { action: "read", path } })
+          const replies = messages.filter(m => m.role === "tool")
+          if (!replies.length) return read("red.py")
+          if (replies.length === 1) return ["green.py", "blue.py", "palette.py", "test_palette.py"].map(read)
+          assert.equal(replies.length, 5)
+        }
+        const p = JSON.parse(call.userText.split("\n").at(-1))
+        audits.push(p)
+        if (scenario === "invalid verdict") return "{}"
+        return JSON.stringify({ taskId: p.taskId, attempt: p.attempt, criterion: p.criteria[0], reportSha256: p.reportSha256,
+          sha256: p.evidence.sha256, outcome: p.evidence.passed ? "PASS" : "FAIL", riskReview: "Reviewed channel implementations and combined tests.",
+          findings: p.evidence.passed ? [] : [{ kind: "scoped-defect", taskId: "task-1", suite: "test_palette", detail: "test_red expected 255." }] })
+      }
+      const i = step.findIndex(s => call.userText.includes(`Assigned task: ${s}`))
+      assert.ok(i >= 0)
+      call.index = i
+      if (messages.some(m => m.role === "tool")) return `Worker report ${i}`
+      assert.equal(call.model, rework && audits.length ? (i === 3 ? "senior" : "middle") : models[tasks[i].tier])
+      if (scenario === "resink" && i < 3) assert.doesNotMatch(call.userText, /Upstream dependencies:/)
+      if (!audits.length && i < 3) {
+        first.push(call)
+        if (first.length === 3) {
+          arrived.resolve()
+          if (scenario !== "off") barrier.resolve()
+        }
+        if (scenario !== "sequential" && !transitive) await barrier.promise
+        if (scenario === "rolling" && i > 0) await fourth.promise
+        await delay(120)
+      }
+      if (i === 3) {
+        assert.ok(call.userText.includes(transitive ? "Worker report 1" : "Worker report 0"))
+        if (scenario === "rolling") fourth.resolve()
+        else assert.ok(call.userText.includes("Worker report 2"))
+      }
+      if (scenario === "unauthorized" && i === 0) return { tool: "goat_task_file", args: { action: "read", path: "green.py" } }
+      const source = i === 3 ? "from red import red\nfrom green import green\nfrom blue import blue\n\ndef rgb():\n    return red(), green(), blue()\n" :
+        `def ${paths[i].slice(0,-3)}():\n    return ${[rework && !audits.length ? 0 : 255, 128, 64][i]}\n`
+      return { tool: "goat_task_file", args: { action: "replace", path: paths[i], source } }
+    }, "project", { instruction: paletteInstruction, timeout: 18000, projectGrant: { project: palette, edit: paths,
+      test: ["test_palette.py"], schedule, step: scenario === "resink" ? undefined : step } })
+    const rpc = await readyRPC(h)
+    await rpc("setConfig", { config: { ...projectConfig, mode: scenario === "resink" ? "resink" : "standard",
+      models: { ...projectConfig.models, l2: { providerID: "fixture", modelID: "middle" } } } })
+    const id = await h.session([], { agent: "build", model: { providerID: "owner-lab", id: "manager" } })
+    const started = performance.now()
+    const pending = conversation ? (async () => {
+      await h.prompt(id, paletteInstruction)
+      await h.wait(id)
+      const round = await h.api(`session/${id}/context`)
+      const part = round.flatMap(m => m.content ?? []).find(p => p.type === "tool" && p.name === "goat_verify_text")
+      const receipt = JSON.parse(part.state.content[0].text)
+      assert.equal(round.filter(m => m.type === "assistant").at(-1).content.at(-1).text, receipt.output)
+      return { ...receipt, evidence: { results: receipt.suites, changes: receipt.files, passed: receipt.checksPassed } }
+    })() : rpc("dispatchText", { sessionID: id, capability: h.capability, instruction: paletteInstruction })
+    if (scenario === "off") {
+      try {
+        await Promise.race([arrived.promise, pending.then(r => { throw Error(JSON.stringify(r)) })])
+        const state = JSON.parse((await rpc("command", { input: "status" })).text.split("Task execution: ")[1])
+        assert.equal(state.tasks.filter(t => t.state === "active").length, 3)
+        await rpc("command", { input: "off" })
+      } finally { barrier.resolve() }
+    }
+    const r = await pending.finally(() => { barrier.resolve(); fourth.resolve() })
+    const elapsed = Math.round(performance.now() - started)
+    if (["cycle","reference","write/write","read/write"].includes(scenario)) {
+      assert.equal(r.status, "failed")
+      assert.match(r.reason, /dependency|conflict/i)
+      assert.equal(h.calls.length, 0)
+      return
+    }
+    if (["budget","unauthorized","off","invalid verdict"].includes(scenario)) {
+      assert.equal(r.status, scenario === "off" ? "cancelled" : "failed", r.reason)
+      if (scenario !== "invalid verdict") {
+        assert.equal(audits.length, 0)
+        assert.ok(!h.calls.some(c => c.index === 3))
+      }
+      if (scenario === "off" || scenario === "budget") assert.equal(h.calls.length, 3)
+      if (scenario === "invalid verdict") assert.equal(r.reason, "invalid-verdict")
+      if (scenario === "unauthorized") assert.match(r.reason, /broker/)
+      return
+    }
+    assert.equal(r.status, "completed", r.reason)
+    if (scenario === "auditor read quota") {
+      const messages = await h.api(`session/${r.ids.auditor}/context`)
+      const parts = messages.flatMap(m => m.content ?? []).filter(p => p.type === "tool")
+      assert.deepEqual(parts.map(p => [p.state.input.path, p.state.status]), [
+        ["red.py","completed"], ["green.py","completed"], ["blue.py","completed"], ["palette.py","error"], ["test_palette.py","error"],
+      ])
+      for (const p of parts.slice(3)) assert.equal(p.state.error.message, "Task file operation limit reached")
+      const rows = (await readFile(r.trace.path, "utf8")).trim().split("\n").map(JSON.parse).filter(row => row.id === r.ids.auditor)
+      assert.deepEqual(rows.filter(row => row.event === "read").map(row => row.path), ["red.py","green.py","blue.py"])
+      assert.equal(rows.filter(row => row.event === "operation-denied").length, 2)
+    }
+    assert.equal(r.evidence.results[0].count, 4)
+    assert.equal(r.evidence.changes.length, 4)
+    assert.equal(r.evidence.passed, true)
+    if (scenario === "conversation") {
+      const proof = execFileSync(process.execPath, [fileURLToPath(new URL("./verify-parallel-live.mjs", import.meta.url)),
+        r.trace.path, r.trace.head, r.file], { encoding: "utf8" })
+      assert.equal(JSON.parse(proof).peakWorkerHttp, 3)
+    }
+    assert.ok(first.every(c => c.end))
+    const workers = h.calls.filter(c => c.index !== undefined)
+    const peak = Math.max(...workers.map(c => workers.filter(w => w.start <= c.start && c.start < w.end).length))
+    const expectPeak = transitive ? 2 : scenario === "sequential" ? 1 : 3
+    assert.equal(peak, expectPeak)
+    if (peak === 3) assert.ok(Math.max(...first.map(c => c.start)) < Math.min(...first.map(c => c.end)))
+    const integrations = audits.at(-1).workers.integrations
+    assert.equal(new Set(integrations.map(row => row.sessionID)).size, integrations.length)
+    const dependentStart = workers.find(c => c.index === 3).start
+    for (const c of first) {
+      if (scenario === "rolling" && c.index !== 0) assert.ok(c.end > dependentStart)
+      else assert.ok(c.end < dependentStart)
+    }
+    assert.deepEqual(integrations.filter(r => r.attempt === 2).map(r => r.taskId), transitive ? ["task-1","task-2","task-4"] : rework ? ["task-1","task-4"] : [])
+    assert.equal(audits.length, rework ? 2 : 1)
+    assert.equal(workers.length, transitive ? 14 : rework ? 12 : 8)
+    t.diagnostic(JSON.stringify({ scenario, elapsedMs: elapsed, peak, workerRequests: workers.length, auditorRequests: h.calls.filter(c => c.model === "reviewer").length,
+      rework: audits.length-1, integrated: r.evidence.passed, verdict: r.reason,
+      firstRequestsMs: first.map(c => [Math.round(c.start-started), Math.round(c.end-started)]) }))
+  })
+}
 
 test("multi-file Worker: six native responses with three broker-confirmed refusals still reach checks and audit", async t => {
   const read = path => ({ tool: "goat_task_file", args: { action: "read", path } })

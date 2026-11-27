@@ -65,8 +65,9 @@ export default Plugin.define({
         }
         if (verb === "status") {
           const latest = await ctx.storage.get("lastCodingTurn")
+          const progress = dispatchText.status()
           const available = (await ctx.model.list()).data.map((model) => ({ providerID: model.providerID, modelID: model.id }))
-          return { text: `Enabled: ${config.enabled}\nMode: ${config.mode}\nManager: ${config.inheritManagerModel ? "inherit session model" : modelStatus(config.models.manager, available)}\nL1: ${modelStatus(config.models.l1, available)}\nL2: ${modelStatus(config.models.l2, available)}\nL3: ${modelStatus(config.models.l3, available)}\nAuditor: ${modelStatus(config.models.auditor, available)}\nOrchestration: provisioned profiles only; production disabled${latest ? `\nLast coding turn: ${JSON.stringify(latest)}` : ""}` }
+          return { text: `Enabled: ${config.enabled}\nMode: ${config.mode}\nManager: ${config.inheritManagerModel ? "inherit session model" : modelStatus(config.models.manager, available)}\nL1: ${modelStatus(config.models.l1, available)}\nL2: ${modelStatus(config.models.l2, available)}\nL3: ${modelStatus(config.models.l3, available)}\nAuditor: ${modelStatus(config.models.auditor, available)}\nOrchestration: provisioned profiles only; production disabled${progress ? `\nTask execution: ${JSON.stringify(progress)}` : ""}${latest ? `\nLast coding turn: ${JSON.stringify(latest)}` : ""}` }
         }
         if (verb === "router") {
           return { text: "Use the interactive /goat router menu to configure models." }

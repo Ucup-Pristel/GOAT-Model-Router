@@ -14,7 +14,7 @@ export async function wireModel(request: Request): Promise<string | null> {
 // The host opts this disposable location into conversational dispatch. The
 // model cannot supply a capability, task, tier, target session or permission.
 export async function installConversation(ctx: Plugin.Context, project: string, endpoint: string | undefined,
-  dispatch: (id: string, instruction: string, signal: AbortSignal, model: ModelRef, steps?: string[]) => Promise<{ status?: string; reason: string; output?: string; workspaceFile?: string; evidence?: { sha256: string; passed: boolean; results: unknown[]; changes?: { path: string; sha256: string }[] }; route?: { model: ModelRef | null }; auditor?: ModelRef; requests?: unknown; review?: unknown; trace?: { path: string; head: string }; observedTokens?: number }>,
+  dispatch: (id: string, instruction: string, signal: AbortSignal, model: ModelRef, steps?: string[]) => Promise<{ status?: string; reason: string; output?: string; workspaceFile?: string; evidence?: { sha256: string; passed: boolean; results: unknown[]; changes?: { path: string; sha256: string }[] }; route?: { model: ModelRef | null }; auditor?: ModelRef; requests?: unknown; workers?: unknown; review?: unknown; trace?: { path: string; head: string }; observedTokens?: number }>,
   authorize?: (instruction: string) => Promise<void>) {
   const config = async () => validateConfig(await ctx.storage.get("config"))
   const permits = new Map<string, { id: string; text: string; wire?: string | null }>()
@@ -43,11 +43,13 @@ export async function installConversation(ctx: Plugin.Context, project: string, 
       if (!endpoint) await ctx.storage.set("lastCodingTurn", { sessionID: call.sessionID, messageID: user.id, status: result.status ?? "failed", reason: result.reason, ...(result.output && { summary: result.output }), ...(result.trace && { trace: result.trace }) })
       // The native tool record, not the Manager's prose, carries the verdict.
       return { content: JSON.stringify({ status: result.status, reason: result.reason,
+        ...(result.workers !== undefined && { workers: result.workers }),
+        ...(result.trace && { trace: result.trace }),
         ...(result.workspaceFile && { file: result.workspaceFile, sha256: result.evidence?.sha256, checksPassed: result.evidence?.passed,
           worker: result.route?.model, auditor: result.auditor, manager: manager.model,
           managerRequestModel: permit.wire ?? null, requests: result.requests, checks: result.evidence?.results.length,
           ...(result.evidence?.changes && { files: result.evidence.changes.map(({ path, sha256 }) => ({ path, sha256 })),
-            suites: result.evidence.results, review: result.review, trace: result.trace, observedRoleTokens: result.observedTokens }) }),
+             suites: result.evidence.results, review: result.review, observedRoleTokens: result.observedTokens }) }),
         ...(result.status === "completed" && { output: result.output }) }) }
     },
   }))
