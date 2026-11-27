@@ -1,13 +1,19 @@
 {
   "name": "goat-model-router",
-  "version": "0.1.0",
+  "version": "0.1.0-beta.1",
+  "license": "Apache-2.0",
   "private": true,
   "type": "module",
   "engines": { "node": ">=22.19.0" },
   "workspaces": ["packages/*"],
   "scripts": {
+    "prepare": "npm run pack:candidate",
+    "build": "tsc -p packages/core && tsc -p packages/opencode && cp packages/opencode/src/*.py packages/opencode/dist/",
+    "pack:candidate": "npm run build && mkdir -p dist && npm pack --workspaces --pack-destination dist && npm install --prefix dist --offline --no-audit --no-save --ignore-scripts ./dist/goatmr-core-$npm_package_version.tgz ./dist/goatmr-opencode-$npm_package_version.tgz",
     "check": "tsc --noEmit",
-    "test": "tsx --test packages/core/test/*.test.ts packages/opencode/test/*.test.ts"
+    "test": "tsx --test packages/core/test/*.test.ts packages/opencode/test/*.test.ts",
+    "preaudit:milestone": "npm run pack:candidate",
+    "audit:milestone": "node --import tsx --test packages/core/test/*.test.ts packages/opencode/test/*.test.ts tests/milestone/*.test.mjs"
   },
   "devDependencies": {
     "@opencode/plugin": "2.3.2",

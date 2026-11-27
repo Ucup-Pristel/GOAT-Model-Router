@@ -7,7 +7,10 @@ function assertCapabilityTier(value: unknown): asserts value is "L1" | "L2" | "L
   if (!capabilityTiers.includes(value as "L1" | "L2" | "L3")) throw new Error(`Invalid capability tier: ${String(value)}`)
 }
 
-const highRiskPattern = /\b(?:deploy(?:ment|ing|ed)?|publish(?:ing|ed)?|delete|security|credential|production|migration|database|auth|secret)\b/
+const highRiskPattern = /\b(?:deploy(?:ment|ing|ed)?|publish(?:ing|ed)?|delete|security|credential|production|migration|database|auth|secret)\b/i
+export function highRiskTerm(text: string): string | undefined {
+  return highRiskPattern.exec(text)?.[0]
+}
 const contextTerms = ["repository", "codebase", "multiple files", "multi-file", "across the project", "project-wide"]
 const complexityMarkers = [" and ", " then ", " also ", " plus ", " integrate ", " refactor ", " architecture ", " design ", " plan ", " audit ", " test "]
 
@@ -22,7 +25,7 @@ export function analyzeTask(input: {
   const uncertainty: string[] = ["Model capability metadata is unavailable; routing uses the configured tier policy."]
 
   let risk: TaskRisk = "low"
-  if (highRiskPattern.test(text)) {
+  if (highRiskTerm(text)) {
     risk = "high"
     reasons.push("High-impact or sensitive terms are present.")
   } else if (/\b(update|modify|change|write|edit|implement|fix)\b/.test(text)) {

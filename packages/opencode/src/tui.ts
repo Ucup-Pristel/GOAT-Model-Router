@@ -1,6 +1,6 @@
 import { Plugin } from "@opencode/plugin/tui"
-import type { GoatConfig } from "@goat/core"
-import { Goat } from "@goat/opencode/rpc"
+import type { GoatConfig } from "@goatmr/core"
+import { Goat } from "./rpc.js"
 
 export default Plugin.define({
   id: "goat.model-router.tui",
@@ -17,26 +17,26 @@ export default Plugin.define({
         run: async (input) => {
           const location = { location: context.location ?? { directory: process.cwd() } }
           try {
-              const { config } = await goat.getConfig({}, location) as { config: GoatConfig }
+            const { config } = await goat.getConfig({}, location) as { config: GoatConfig }
             const [verb, ...args] = (input ?? "status").trim().split(/\s+/)
+            if (args.length) {
+              await context.ui.dialog.alert({ title: "GOAT", message: "Use /goat router, /goat mode, /goat on, /goat off or /goat status. Choose models and modes in the menu." })
+              return
+            }
             if (verb === "on" || verb === "off") {
-              await goat.setConfig({ config: { ...config, enabled: verb === "on" } }, location)
-              await context.ui.dialog.alert({ title: `GOAT ${verb}`, message: `GOAT ${verb.toUpperCase()} saved. Orchestration execution is not implemented.` })
+              const { text } = await goat.command({ input: verb }, location) as { text: string }
+              await context.ui.dialog.alert({ title: `GOAT ${verb}`, message: text })
               return
             }
             if (verb === "mode") {
-              const requested = args[0]
-              const mode = requested === "standard" || requested === "resink"
-                ? requested
-                : await context.ui.dialog.select({ title: "GOAT mode", current: config.mode, options: [
-                    { title: "Standard", value: "standard", description: "Manager Task Planner disabled" },
-                    { title: "Resink", value: "resink", description: "Manager Task Planner enabled for decision requests" },
-                  ] })
+              const mode = await context.ui.dialog.select({ title: "GOAT mode", current: config.mode, options: [
+                { title: "Standard", value: "standard", description: "Use for ordinary Build workspace tasks; keep the user's plan." },
+                { title: "Resink", value: "resink", description: "Allow planning for decision requests; ordinary workspace edits require Standard." },
+              ] })
               if (mode) await goat.setConfig({ config: { ...config, mode } }, location)
               return
             }
             if (verb === "router") {
-              if (args.length > 0) { await context.ui.dialog.alert({ title: "GOAT router", message: "Use the interactive model picker; CLI model IDs are not accepted." }); return }
               const { models } = await goat.listModels({}, location) as { models: { providerID: string; modelID: string; name: string; providerName: string }[] }
               const next = structuredClone(config)
               const roles = ["manager", "l1", "l2", "l3", "auditor"] as const
@@ -72,7 +72,7 @@ export default Plugin.define({
             }
             await context.ui.dialog.alert({ title: "GOAT", message: "Usage: /goat router|mode|on|off|status" })
           } catch (error) {
-            await context.ui.dialog.alert({ title: "GOAT RPC unavailable", message: describeError(error) })
+            await context.ui.dialog.alert({ title: "GOAT command failed", message: `${describeError(error)}\nCheck the plugin load details in the OpenCode server log; use /goat status to check model assignments.` })
           }
         },
       }],

@@ -1,0 +1,12 @@
+{
+  "instruction": "Fix slugify in slug.py to lowercase words, remove leading and trailing whitespace, and collapse whitespace runs into one hyphen.",
+  "filename": "slug.py",
+  "function": "slugify",
+  "initialSource": "def slugify(value):\n    return value.lower().replace(' ', '-')\n",
+  "cases": [
+    { "args": ["  Red   PLUM  "], "expected": "red-plum" },
+    { "args": ["Tea\tand\nCAKE"], "expected": "tea-and-cake" },
+    { "args": [""], "expected": "" },
+    { "args": ["42"], "expected": "42" }
+  ]
+}

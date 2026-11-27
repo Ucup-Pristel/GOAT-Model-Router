@@ -1,9 +1,13 @@
 export type {
   CapabilityTier,
+  DispatchReadiness,
   GoatMode,
   ManagerReasoner,
   OriginalIntent,
   RoutingDecision,
+  ScopeFinding,
+  ScopeFindingCode,
+  ScopeFindingSeverity,
   TaskAnalysis,
   TaskComplexity,
   TaskContextNeed,
@@ -16,16 +20,18 @@ export type {
   WorkerPrompt,
 } from "./contracts.js"
 export { createIntent, cloneIntent, intentFingerprint } from "./intent.js"
-export { planResink, planStandard } from "./planner.js"
+export { planResink, planResinkDetailed, planStandard } from "./planner.js"
 export { compileWorkerPrompt } from "./prompt.js"
 export { analyzeTask, routeTask, tierForAnalysis, tierForTask, tierLabel, validateManagerModel } from "./routing.js"
+export { collectInstructionFindings, collectIntentFindings, collectRiskFindings, collectScopeFindings } from "./scope.js"
 export { decideTask } from "./pipeline.js"
 export type { TaskDecisionRequest } from "./pipeline.js"
 export {
-  assertTaskInScope,
   assertTaskPreservesIntent,
+  validateDispatchReadiness,
   validateOriginalIntent,
   validateRoutingDecision,
+  validateScopeFinding,
   validateTaskAnalysis,
   validateTaskDecisionResult,
   validateTaskPlan,

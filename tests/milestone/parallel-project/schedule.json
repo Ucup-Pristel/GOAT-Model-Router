@@ -1,0 +1,26 @@
+{
+  "tasks": [
+    {
+      "objective": "Define red() in red.py.",
+      "dependsOn": [], "read": [], "write": ["red.py"], "tier": "L1",
+      "criteria": ["red() returns the integer 255."], "suites": ["test_palette.py"]
+    },
+    {
+      "objective": "Define green() in green.py.",
+      "dependsOn": [], "read": [], "write": ["green.py"], "tier": "L1",
+      "criteria": ["green() returns the integer 128."], "suites": ["test_palette.py"]
+    },
+    {
+      "objective": "Define blue() in blue.py.",
+      "dependsOn": [], "read": [], "write": ["blue.py"], "tier": "L1",
+      "criteria": ["blue() returns the integer 64."], "suites": ["test_palette.py"]
+    },
+    {
+      "objective": "Define rgb() in palette.py using the three channel functions.",
+      "dependsOn": ["task-1", "task-2", "task-3"],
+      "read": ["red.py", "green.py", "blue.py"], "write": ["palette.py"], "tier": "L2",
+      "criteria": ["Import and call red(), green(), blue(); return their integer values in an RGB tuple."],
+      "suites": ["test_palette.py"]
+    }
+  ]
+}

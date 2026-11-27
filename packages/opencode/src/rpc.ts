@@ -3,6 +3,13 @@ import { Rpc } from "@opencode/plugin/rpc"
 export const Goat = Rpc.define({
   id: "goat.model-router",
   methods: {
+    dispatchText: {
+      input: { type: "object", properties: {
+        sessionID: { type: "string" }, capability: { type: "string" }, instruction: { type: "string", maxLength: 2048 },
+        tier: { enum: ["L1", "L2", "L3"] },
+      }, required: ["sessionID", "capability", "instruction"], additionalProperties: false },
+      output: { type: "object", properties: { status: { type: "string" }, reason: { type: "string" } }, required: ["status", "reason"] },
+    },
     health: {
       input: {
         type: "object",
@@ -48,11 +55,24 @@ export const Goat = Rpc.define({
         type: "object",
         properties: {
           status: { type: "string" },
+          readiness: { type: "string" },
           reason: { type: "string" },
           result: { type: "object" },
         },
-        required: ["status", "result"],
+        required: ["status", "readiness", "result"],
         additionalProperties: false,
+      },
+    },
+    runModelOnly: {
+      input: { type: "object", properties: { confirm: { type: "string" } }, required: ["confirm"], additionalProperties: false },
+      output: {
+        type: "object",
+        properties: {
+          status: { type: "string" }, intentID: { type: "string" }, taskID: { type: "string" }, tier: { type: "string" },
+          model: { type: "object", properties: { providerID: { type: "string" }, modelID: { type: "string" } }, required: ["providerID", "modelID"], additionalProperties: false },
+          result: { type: "string" }, elapsedMs: { type: "number" },
+        },
+        required: ["status", "intentID", "taskID", "tier", "model", "result", "elapsedMs"], additionalProperties: false,
       },
     },
   },

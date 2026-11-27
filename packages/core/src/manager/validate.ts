@@ -1,7 +1,9 @@
 import type {
   CapabilityTier,
+  DispatchReadiness,
   OriginalIntent,
   RoutingDecision,
+  ScopeFinding,
   TaskAnalysis,
   TaskComplexity,
   TaskContextNeed,
@@ -207,66 +209,36 @@ export function isProhibitionText(value: string): boolean {
   return prohibitionPrefix.test(value.trim())
 }
 
-const outOfScopeAction = /\b(?:deploy(?:ment|ing|ed|s)?|publish(?:ing|ed|es)?|releas(?:e|ing|ed|es)?|ship(?:ping|ped|ment|s)?|push(?:ing|ed|es)?)\b/i
+const scopeFindingCodes = [
+  "possible-out-of-scope-action",
+  "ambiguous-instruction",
+  "high-risk-instruction",
+  "high-risk-task",
+  "skipped-non-actionable-item",
+  "no-actionable-task",
+] as const
 
-const planningVerbPrefix = /^(?:review|plan|document|test|read|check|open|summarize|translate|analyze|analyse|update|write|edit|improve|create|implement|design|build|develop|fix|debug|investigate|troubleshoot|inspect|audit|refactor|migrate|ensure|verify|validate|maintain|support|add|remove)\b/i
+const scopeFindingSeverities = ["advisory", "review"] as const
 
-const politePrefix = /^(?:please(?:\s+(?:help|make\s+sure))?|could you(?:\s+kindly)?|can you(?:\s+please)?|would you(?:\s+mind)?|we should|we need to|i need to|i want to|let us|let's|lets)\s+/i
-
-function stripPolitePrefix(value: string): string {
-  let result = value.trim()
-  for (let index = 0; index < 3; index++) {
-    const next = result.replace(politePrefix, "")
-    if (next === result) break
-    result = next
-  }
-  return result
+export function validateScopeFinding(value: unknown): ScopeFinding {
+  if (!isPlainObject(value)) throw new Error("Invalid ScopeFinding: expected object")
+  const code = scopeFindingCodes.includes(value.code as typeof scopeFindingCodes[number])
+    ? (value.code as ScopeFinding["code"])
+    : (() => { throw new Error("Invalid ScopeFinding.code") })()
+  const severity = scopeFindingSeverities.includes(value.severity as typeof scopeFindingSeverities[number])
+    ? (value.severity as ScopeFinding["severity"])
+    : (() => { throw new Error("Invalid ScopeFinding.severity") })()
+  const message = readString(value.message, "ScopeFinding.message")
+  const evidence = readString(value.evidence, "ScopeFinding.evidence")
+  const taskId = value.taskId === undefined ? undefined : readString(value.taskId, "ScopeFinding.taskId")
+  return { code, severity, message, evidence, ...(taskId ? { taskId } : {}) }
 }
 
-function splitNoSpaceConnectors(segment: string): string[] {
-  if (!segment.includes(" ") || /\.[A-Za-z0-9]+(?:\s|$)/.test(segment)) return [segment]
-  if (planningVerbPrefix.test(segment)) {
-    const rest = segment.replace(planningVerbPrefix, "").trim()
-    if (/^[\w.-]+\/[\w./-]+/.test(rest)) return [segment]
+export function validateDispatchReadiness(value: unknown): DispatchReadiness {
+  if (value !== "ready" && value !== "needs_review" && value !== "not_applicable") {
+    throw new Error("Invalid TaskDecisionResult.readiness")
   }
-  for (const connector of ["+", "&", "/"]) {
-    const index = segment.indexOf(connector)
-    if (index <= 0) continue
-    if (segment[index - 1] === connector || segment[index + 1] === connector) continue
-    const left = segment.slice(0, index).trim()
-    const right = segment.slice(index + 1).trim()
-    const leftWords = left.split(/\s+/).filter(Boolean)
-    if (leftWords.length >= 2 && leftWords[leftWords.length - 1].length > 1 && outOfScopeAction.test(right)) {
-      return [left, ...splitNoSpaceConnectors(right)]
-    }
-  }
-  return [segment]
-}
-
-const scopeAllowPatterns: readonly RegExp[] = [
-  /^(?:deploy(?:ing|ment)?|publish(?:ing)?|releas(?:e|ing)?|ship(?:ping)?)\s+(?:(?:the|a|an|our|my|their|new|latest|these|those)\s+)*(?:guide|plans?|docs?|documentation|strategy|checklist|architectures?|designs?|troubleshooting|notes?|polic(?:y|ies)|process|pipeline|scripts?|configuration|config)\b/,
-  /^(?:releas(?:e|ing)?|ship(?:ping)?)\s+(?:(?:the|a|an|our|my|their|new|latest|these|those)\s+)*features?\b/,
-  /^push(?:ing)?\s+(?:(?:the|a|an|our|my|their|new|latest|these|those)\s+)*(?:boundary|notifications?|api|ui|service|updates?|feature flags)\b/,
-  /^(?:production|staging)\s+deploy(?:ment)?\b/,
-  /\b(?:production|staging)\s+deploy(?:ment)?\b/,
-  /^(?:the\s+)?(?:deploy(?:ment)?|release|publish|ship|push)\s+(?:(?:is|are|has|needs?)\b|(?:(?:guide|notes?|docs?|documentation|scripts?|service|process|pipeline|build|package|app|application|environment|system)\b.*\b(?:broken|failing|failed|outdated|stale|down|slow|errors?|bugs?|issues?|needs?\s+(?:update|updating|fix|review)|has\s+(?:errors?|bugs?|issues?)|is\s+(?:broken|failing|outdated|down|slow)|are\s+(?:updated|ready|complete|current))\b))/,
-  /^(?:the\s+)?(?:deploy(?:ment)?|release|publish|ship|push)\s+(?:guide|notes?|docs?|documentation)\s+needs?\s+(?:update|updating|fix|review)\b/,
-]
-
-export function assertTaskInScope(task: TaskSpecification): void {
-  const clauses = task.objective
-    .split(/[,.;!?\n:]+|->|=>|\s+(?:and|then|also|plus|but|or|however|yet|while|whereas|as well as|along with)\s+|\s+[-—|]\s+|\s+&\s+|\s+\/\s+|\s+\+\s+/i)
-    .flatMap(splitNoSpaceConnectors)
-    .map((clause) => stripPolitePrefix(clause).toLowerCase())
-    .filter(Boolean)
-  for (const clause of clauses) {
-    if (isProhibitionText(clause)) continue
-    if (planningVerbPrefix.test(clause)) continue
-    if (scopeAllowPatterns.some((pattern) => pattern.test(clause))) continue
-    if (outOfScopeAction.test(clause)) {
-      throw new Error(`Out-of-scope objective: ${task.objective}`)
-    }
-  }
+  return value
 }
 
 export function assertTaskPreservesIntent(intent: OriginalIntent, task: TaskSpecification): void {
@@ -290,7 +262,7 @@ export function assertTaskPreservesIntent(intent: OriginalIntent, task: TaskSpec
 
 export function validateTaskDecisionResult(value: unknown): TaskDecisionResult {
   if (!isPlainObject(value)) throw new Error("Invalid TaskDecisionResult: expected object")
-  const status = value.status === "planned" || value.status === "bypassed" ? value.status : (() => { throw new Error("Invalid TaskDecisionResult.status") })()
+  const status = value.status === "planned" || value.status === "needs_review" || value.status === "bypassed" ? value.status : (() => { throw new Error("Invalid TaskDecisionResult.status") })()
   const reason = value.reason === undefined ? undefined : readString(value.reason, "TaskDecisionResult.reason")
   if (!isPlainObject(value.intent)) throw new Error("Invalid TaskDecisionResult.intent")
   const intent = deepFreeze(validateOriginalIntent(value.intent))
@@ -303,8 +275,16 @@ export function validateTaskDecisionResult(value: unknown): TaskDecisionResult {
   const prompts = value.prompts.map(validateWorkerPrompt)
   if (!Array.isArray(value.verification)) throw new Error("Invalid TaskDecisionResult.verification")
   const verification = value.verification.map(validateVerificationRequirements)
+  if (!Array.isArray(value.scopeFindings)) throw new Error("Invalid TaskDecisionResult.scopeFindings")
+  const scopeFindings = value.scopeFindings.map(validateScopeFinding)
+  const reviewReasons = readStringArray(value.reviewReasons, "TaskDecisionResult.reviewReasons")
+  const readiness = validateDispatchReadiness(value.readiness)
   if (decisions.length !== tasks.length || prompts.length !== tasks.length || verification.length !== tasks.length) {
     throw new Error("Invalid TaskDecisionResult: decisions, prompts, and verification must align with tasks")
+  }
+  const taskIds = new Set(tasks.map((task) => task.id))
+  for (const finding of scopeFindings) {
+    if (finding.taskId && !taskIds.has(finding.taskId)) throw new Error("Invalid TaskDecisionResult: scope finding references an unknown task")
   }
   tasks.forEach((task, index) => {
     if (decisions[index].taskId !== task.id || prompts[index].taskId !== task.id || verification[index].taskId !== task.id) {
@@ -316,10 +296,7 @@ export function validateTaskDecisionResult(value: unknown): TaskDecisionResult {
   if (plan && (plan.tasks.length !== tasks.length || plan.tasks.some((task, index) => task.id !== tasks[index].id))) {
     throw new Error("Invalid TaskDecisionResult: plan tasks must match result tasks")
   }
-  tasks.forEach((task) => {
-    assertTaskPreservesIntent(intent, task)
-    assertTaskInScope(task)
-  })
+  tasks.forEach((task) => assertTaskPreservesIntent(intent, task))
   if (plan) {
     for (const criterion of plan.acceptanceCriteria) {
       if (tasks.some((task) => !task.acceptanceCriteria.includes(criterion))) {
@@ -330,6 +307,30 @@ export function validateTaskDecisionResult(value: unknown): TaskDecisionResult {
   if (status === "bypassed" && (tasks.length > 0 || decisions.length > 0 || prompts.length > 0 || verification.length > 0 || plan !== null)) {
     throw new Error("Invalid TaskDecisionResult: bypassed result must not contain tasks or prompts")
   }
+  if (status === "bypassed" && (readiness !== "not_applicable" || scopeFindings.length > 0 || reviewReasons.length > 0)) {
+    throw new Error("Invalid TaskDecisionResult: bypassed result must not contain findings or dispatch readiness")
+  }
   if (status === "planned" && tasks.length === 0) throw new Error("Invalid TaskDecisionResult: planned result must contain at least one task")
-  return { status, reason, intent, tasks, plan, decisions, prompts, verification }
+  if (status !== "bypassed" && readiness === "not_applicable") {
+    throw new Error("Invalid TaskDecisionResult: non-bypassed result must declare dispatch readiness")
+  }
+  if (status === "needs_review" && readiness !== "needs_review") {
+    throw new Error("Invalid TaskDecisionResult: needs_review status requires needs_review readiness")
+  }
+  if (status === "needs_review" && reviewReasons.length === 0) {
+    throw new Error("Invalid TaskDecisionResult: needs_review status requires review reasons")
+  }
+  const reviewFindings = scopeFindings.filter((finding) => finding.severity === "review")
+  if (readiness === "ready") {
+    if (reviewFindings.length > 0 || reviewReasons.length > 0) throw new Error("Invalid TaskDecisionResult: ready result must not contain review findings or review reasons")
+    if (intent.ambiguities.length > 0) throw new Error("Invalid TaskDecisionResult: ambiguous instructions must be marked needs_review")
+    if (tasks.some((task) => task.risk === "high")) throw new Error("Invalid TaskDecisionResult: high-risk tasks must be marked needs_review")
+  }
+  if (readiness === "needs_review") {
+    if (reviewReasons.length === 0) throw new Error("Invalid TaskDecisionResult: needs_review requires at least one review reason")
+    for (const finding of reviewFindings) {
+      if (!reviewReasons.includes(finding.message)) throw new Error("Invalid TaskDecisionResult: every review finding must be listed in reviewReasons")
+    }
+  }
+  return { status, reason, intent, tasks, plan, decisions, prompts, verification, scopeFindings, reviewReasons, readiness }
 }

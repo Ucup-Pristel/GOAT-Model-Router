@@ -1,0 +1,8 @@
+GOAT Model Router
+
+Copyright in the project contributions remains with their respective holders.
+
+The OpenCode adapter uses the OpenCode plugin API. OpenCode and its SDK
+are separate projects. TypeScript is used to build the packages. The Linux
+workspace verifier uses the host's Python and libseccomp installations.
+These components are not bundled and retain their respective licenses.
