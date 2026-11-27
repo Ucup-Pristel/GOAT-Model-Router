@@ -3,3 +3,4 @@ dist/
 coverage/
 .kiro
 .vscode
+/docs/internal/

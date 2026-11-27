@@ -1,5 +1,5 @@
 import { Plugin } from "@opencode/plugin/tui"
-import type { GoatConfig } from "@goat/core"
+import type { GoatConfig } from "@goatmr/core"
 import { Goat } from "./rpc.js"
 
 export default Plugin.define({

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { setTimeout as delay } from "node:timers/promises"
-import { auditHeader, canTransition, decideTask, defaults, executePlan, RoleBudget } from "@goat/core"
+import { auditHeader, canTransition, decideTask, defaults, executePlan, RoleBudget } from "@goatmr/core"
 import { deny, startHost } from "./host-fixture.mjs"
 
 const worker = { providerID: "fixture", modelID: "mock" }

@@ -112,9 +112,9 @@ export async function startHost(t, syntheticReply, plugin = false, options = {})
     if (options.packed) {
       const prefix = join(root, "installed")
       const { version } = JSON.parse(await readFile(new URL("../../package.json", import.meta.url)))
-      const archives = ["core", "opencode"].map(name => fileURLToPath(new URL(`../../dist/goat-${name}-${version}.tgz`, import.meta.url)))
+      const archives = ["core", "opencode"].map(name => fileURLToPath(new URL(`../../dist/goatmr-${name}-${version}.tgz`, import.meta.url)))
       execFileSync("npm", ["install", "--prefix", prefix, "--offline", "--no-audit", "--ignore-scripts", ...archives], { cwd: root, env })
-      pluginDirectory = join(prefix, "node_modules/@goat/opencode")
+      pluginDirectory = join(prefix, "node_modules/@goatmr/opencode")
     } else await installPrivatePlugin(project)
     if (plugin !== "workspace") Object.assign(env, {
       GOAT_TEXT_PROJECT: project, GOAT_TEXT_CAPABILITY: randomBytes(32).toString("hex"), GOAT_TEXT_PROVIDER: endpoint })

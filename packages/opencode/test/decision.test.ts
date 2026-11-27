@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { defaults } from "@goat/core"
+import { defaults } from "@goatmr/core"
 import plugin from "../src/index.js"
 import { Goat } from "../src/rpc.js"
 

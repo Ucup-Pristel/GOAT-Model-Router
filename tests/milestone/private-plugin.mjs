@@ -61,7 +61,7 @@ export async function signProject(env, options, privateKey, publicKey) {
 
 export async function installPrivatePlugin(project) {
   for (const name of ["core", "opencode"]) {
-    const dest = name === "opencode" ? join(project, ".opencode/plugins/goat") : join(project, "node_modules/@goat/core")
+    const dest = name === "opencode" ? join(project, ".opencode/plugins/goat") : join(project, "node_modules/@goatmr/core")
     const src = new URL(`../../packages/${name}/`, import.meta.url)
     await mkdir(dest, { recursive: true })
     await cp(new URL("package.json", src), join(dest, "package.json"))

@@ -37,20 +37,23 @@ test("native package install, cross-workspace scope, update and uninstall", { ti
   await writeFile(join(env.HOME, ".npmrc"), `registry=${url}\n`)
   const { version } = JSON.parse(await readFile(new URL("../../package.json", import.meta.url)))
   for (const part of ["core", "opencode"]) {
-    const name = `@goat/${part}`
+    const name = `@goatmr/${part}`
     const versions = {}
     const dir = join(root, part)
     await mkdir(dir)
     for (const revision of [version, "0.0.0"]) {
-      const filename = `goat-${part}-${revision}.tgz`
+      const filename = `goatmr-${part}-${revision}.tgz`
       const archive = join(root, filename)
       if (revision === version) {
         await writeFile(archive, await readFile(new URL(`../../dist/${filename}`, import.meta.url)))
         await run("tar", ["-xzf", archive, "-C", dir, "--strip-components=1"])
+        for (const file of ["LICENSE", "NOTICE"]) {
+          assert.deepEqual(await readFile(join(dir, file)), await readFile(new URL(`../../${file}`, import.meta.url)))
+        }
       } else {
         const manifest = { ...versions[version], version: revision }
         delete manifest.dist
-        if (part === "opencode") manifest.dependencies = { "@goat/core": revision }
+        if (part === "opencode") manifest.dependencies = { "@goatmr/core": revision }
         await writeFile(join(dir, "package.json"), JSON.stringify(manifest))
         await run("npm", ["pack", "--ignore-scripts", "--pack-destination", root], dir)
       }
@@ -59,18 +62,23 @@ test("native package install, cross-workspace scope, update and uninstall", { ti
       archives.set(filename, data)
       versions[revision] = { ...manifest, dist: { tarball: `${url}/${filename}`, shasum: createHash("sha1").update(data).digest("hex") } }
     }
-    metadata.set(name, { name, "dist-tags": { latest: "0.0.0" }, versions })
+    metadata.set(name, { name, "dist-tags": { beta: "0.0.0" }, versions })
   }
   const config = join(env.XDG_CONFIG_HOME, "opencode")
   await mkdir(config, { recursive: true })
   const configFile = join(config, "opencode.json")
-  const keep = { plugins: ["-unrelated.plugin"], update: "disable", warming: false,
+  const unrelated = join(root, "unrelated")
+  await mkdir(unrelated)
+  await writeFile(join(unrelated, "index.ts"), `import { Plugin } from "@opencode/plugin"
+export default Plugin.define({ id: "fixture.unrelated", async setup() {} })`)
+  const keep = { plugins: [unrelated], update: "disable", warming: false,
     providers: { local: { package: "@opencode/ai/providers/openai-compatible", settings: { baseURL: url, apiKey: "mock-only" }, models: { mock: {} } } },
     mcp: { servers: { preserved: { type: "remote", url, disabled: true } } }, permissions: [{ action: "shell", resource: "*", effect: "deny" }] }
   await writeFile(configFile, JSON.stringify(keep))
-  const authFile = join(env.XDG_DATA_HOME, "opencode/auth.json")
-  const mockAuth = '{"fixture":{"type":"api","key":"local-canary"}}'
-  await writeFile(authFile, mockAuth, {mode: 0o600})
+  const oauth = { type: "oauth", methodID: "fixture", access: "mock-access", refresh: "mock-refresh", expires: 4102444800000 }
+  await host.api("credential", "POST", { integrationID: "fixture", value: oauth, activate: true })
+  const credentials = await host.api("credential")
+  assert.ok(credentials.some(entry => entry.active && entry.value.refresh === oauth.refresh))
   const projects = ["a", "b"].map(p => join(root, p))
   for (const dir of projects) {
     await mkdir(dir)
@@ -78,9 +86,9 @@ test("native package install, cross-workspace scope, update and uninstall", { ti
     await run("git", ["-c", "user.name=Test", "-c", "user.email=test@localhost", "commit", "-qm", dir, "--allow-empty"], dir)
   }
   const [a, b] = projects
-  const target = "@goat/opencode"
+  const target = "@goatmr/opencode@beta"
   const rpc = async (dir, method, input = {}) => (await host.api(`rpc/goat.model-router/${method}`, "POST", {input}, dir)).output
-  const info = async dir => (await host.api("plugin", "GET", undefined, dir)).find(p => p.id === "goat.model-router")
+  const info = async (dir, id = "goat.model-router") => (await host.api("plugin", "GET", undefined, dir)).find(p => p.id === id)
   async function loaded(dir, revision) {
     const end = Date.now() + 8000
     for (;;) {
@@ -97,6 +105,7 @@ test("native package install, cross-workspace scope, update and uninstall", { ti
   assert.deepEqual(JSON.parse(await readFile(configFile)), { ...keep, plugins: [...keep.plugins, target] })
   await loaded(a, "0.0.0")
   await loaded(b, "0.0.0")
+  assert.equal((await info(a, "fixture.unrelated"))?.state.status, "active")
   const fresh = (await rpc(a, "getConfig")).config
   assert.equal(fresh.enabled, false)
   const models = { l1: { providerID: "fixture", modelID: "mock" } }
@@ -107,7 +116,7 @@ test("native package install, cross-workspace scope, update and uninstall", { ti
   assert.equal(other.enabled, true)
   assert.equal(other.mode, "resink")
   assert.deepEqual(other.models, models)
-  for (const item of metadata.values()) item["dist-tags"].latest = version
+  for (const item of metadata.values()) item["dist-tags"].beta = version
   await exec(bin, ["plugin", "update", target, "--server", host.url], {
     cwd: a, env: { ...env, OPENCODE_PASSWORD: host.password }, timeout: 20000,
   })
@@ -120,12 +129,17 @@ test("native package install, cross-workspace scope, update and uninstall", { ti
   assert.deepEqual(JSON.parse(await readFile(configFile)), keep)
   assert.equal(await info(a), undefined)
   assert.equal(await info(b), undefined)
-  await writeFile(join(a, "opencode.json"), JSON.stringify({plugins: [`${target}@${version}`]}))
+  await run(bin, ["plugin", "add", target], a)
+  await loaded(a, version)
+  await loaded(b, version)
+  await run(bin, ["plugin", "remove", target], a)
+  await writeFile(join(a, "opencode.json"), JSON.stringify({plugins: [`@goatmr/opencode@${version}`]}))
   await host.api("location/reload", "POST")
   await loaded(a, version)
   assert.equal(await info(b), undefined)
   assert.deepEqual((await rpc(a, "getConfig")).config, { ...fresh, mode: "resink", models })
+  assert.equal((await info(b, "fixture.unrelated"))?.state.status, "active")
   assert.deepEqual(JSON.parse(await readFile(configFile)), keep)
   assert.equal(host.calls.length, 0)
-  assert.equal(await readFile(authFile, "utf8"), mockAuth)
+  assert.deepEqual(await host.api("credential"), credentials)
 })

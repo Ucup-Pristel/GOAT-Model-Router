@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { tmpdir } from "node:os"
 import { sandbox } from "./coding.js"
-import { digest, ProjectFileRefusal, validateSchedule, type ProjectFile, type Schedule } from "@goat/core"
+import { digest, ProjectFileRefusal, validateSchedule, type ProjectFile, type Schedule } from "@goatmr/core"
 
 export type ProjectTask = {
   instruction: string; location: string; expires: number; userPlan?: string[]

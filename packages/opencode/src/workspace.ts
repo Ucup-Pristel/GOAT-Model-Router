@@ -1,5 +1,5 @@
 import { Model, type Plugin } from "@opencode/plugin"
-import { digest, validateConfig, validateSchedule, type ModelRef } from "@goat/core"
+import { digest, validateConfig, validateSchedule, type ModelRef } from "@goatmr/core"
 import { constants } from "node:fs"
 import { execFile } from "node:child_process"
 import { fileURLToPath } from "node:url"

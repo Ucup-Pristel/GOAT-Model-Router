@@ -1,5 +1,5 @@
 import { Plugin } from "@opencode/plugin"
-import { decideTask, defaults, modelStatus, validateConfig } from "@goat/core"
+import { decideTask, defaults, modelStatus, validateConfig } from "@goatmr/core"
 import { Goat } from "./rpc.js"
 import { textRuntime } from "./text-runtime.js"
 import { workspaceBlock } from "./workspace.js"

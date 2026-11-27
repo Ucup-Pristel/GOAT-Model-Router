@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { syncProject, type ProjectTask } from "../src/project.js"
-import { projectSnapshot, runReady } from "@goat/core"
+import { projectSnapshot, runReady } from "@goatmr/core"
 
 test("cancellation, expiry or a stale disk image prevents materialization", async () => {
   const disk: ProjectTask["files"] = ["a","b"].map(path => ({ path, source: "old", role: "edit" }))

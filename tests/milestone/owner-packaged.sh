@@ -2,7 +2,7 @@
 # Run interactively from the Owner's authenticated native Linux terminal.
 set -eu
 if [ "$#" -ne 2 ]; then
-  echo "Usage: sh owner-packaged.sh /path/goat-core-VERSION.tgz /path/goat-opencode-VERSION.tgz" >&2
+  echo "Usage: sh owner-packaged.sh /path/goatmr-core-VERSION.tgz /path/goatmr-opencode-VERSION.tgz" >&2
   exit 2
 fi
 database=$(realpath -m "${OPENCODE_DB:-${XDG_DATA_HOME:-$HOME/.local/share}/opencode/opencode.db}")
@@ -21,7 +21,7 @@ mkdir -p "$work/calculator/src"
 cd "$work/calculator"
 npm install --prefix "$work/install" --offline --ignore-scripts --no-audit "$core" "$adapter"
 cat > opencode.json <<'JSON'
-{"plugins":["../install/node_modules/@goat/opencode"]}
+{"plugins":["../install/node_modules/@goatmr/opencode"]}
 JSON
 echo 'def answer(): return 0' > src/calc.py
 cat > test_calc.py <<'PY'

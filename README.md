@@ -1,5 +1,7 @@
 # GOAT Model Router
 
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
 GOAT lets one OpenCode Build session delegate a scoped change to other models, test the result, and ask a separate model to review the evidence **before changing your checkout**. Use it when you want to choose which model plans, implements and reviews a task, and to see what actually passed. GOAT starts **OFF**.
 
 ```text
@@ -22,23 +24,14 @@ OpenCode is the first production adapter for the portable GOAT core. Your provid
 
 ## Install
 
-**Candidate status:** the npm packages are not published. To try the candidate now, use the two local tarballs as described below. The registry commands are for use **after publication** under the approved names.
+**Public beta: `0.1.0-beta.1`**. These registry instructions apply once the `beta` tag is published. See the [release notes](docs/releases/v0.1.0-beta.1.md) for the supported host and known limitations.
 
 | Where to load GOAT | Native installation after publication |
 |---|---|
-| All your OpenCode projects | Run `opencode plugin add @goat/opencode`. OpenCode installs the matching core and adds the plugin to your user configuration. |
-| Just one project | Append `"@goat/opencode@0.1.0"` to `plugins` in that project's `opencode.json(c)` or `.opencode/opencode.json(c)`. OpenCode resolves it for that project and its descendants. |
+| All your OpenCode projects | Run `opencode plugin add @goatmr/opencode@beta`. OpenCode installs the matching core and adds the plugin to your user configuration. |
+| Just one project | Append `"@goatmr/opencode@0.1.0-beta.1"` to `plugins` in that project's `opencode.json(c)` or `.opencode/opencode.json(c)`. OpenCode resolves it for that project and its descendants. |
 
-For the **unpublished candidate**, place both archives in the same directory. From that directory on Linux:
-
-```sh
-install_dir="${XDG_DATA_HOME:-$HOME/.local/share}/goat-candidates/0.1.0"
-npm install --offline --ignore-scripts --no-audit --prefix "$install_dir" \
-  "$PWD/goat-core-0.1.0.tgz" "$PWD/goat-opencode-0.1.0.tgz"
-printf '%s\n' "$install_dir/node_modules/@goat/opencode"
-```
-
-Append the **printed absolute directory** as one entry in `plugins`. For global use, edit `${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode.json(c)`; for project-only use, edit the project config above. Keep the existing entries, comments and all other settings. If `plugins` is absent, add that field. Do not copy provider credentials, replace a config file, or install both ways. OpenCode loads the server, terminal UI and RPC contract from the one entry. A `.tgz` is not itself a native plugin directory.
+Choose one installation scope. For a project without a `plugins` field, add it as an array containing the entry above. Keep your existing settings and plugin entries. OpenCode loads the server, TUI and RPC parts together; no source checkout, build, separate core install or provider gateway is needed. Run `/goat status` in the terminal UI to check the installation.
 
 ## Quick start
 
@@ -74,7 +67,7 @@ The core preserves `OriginalIntent` (the exact instruction, constraints and acce
 | L3 | Strong reasoning and complex implementation, including bounded escalation. |
 | Auditor | Strong independent verification and critical reasoning; evaluates test evidence rather than trusting a Worker report. |
 
-The dynamic Worker pool starts only tasks whose dependencies have completed. In Standard, multiple objectives follow the user's order unless the request authorizes independent work. Conflicting scopes are rejected. Up to four tasks can share a run, with at most three Workers active at once. Request budgets are shared, not multiplied per Worker. A reproducible defect can trigger one bounded rework round, including affected dependents. A failed audit is not permission to write.
+If your prompt contains multiple objectives, state which may run independently; otherwise Standard preserves their order. See [orchestration](docs/orchestration.md) for task limits, file conflicts and rework.
 
 ### Example model assignments
 
@@ -96,7 +89,7 @@ Look for `checksPassed: true`, `reason: verified_applied`, and `application.appl
 
 ## Support and trust boundaries
 
-- **Distribution target tested:** native OpenCode **2.4.2** on Linux x86-64, including the terminal in VSCodium. No GUI command registration. Earlier adapter regression coverage on 2.3.2 and 2.4.1 is [documented separately](docs/task-3-opencode-compat.md); the package lifecycle gate targets 2.4.2.
+- **Distribution target tested:** native OpenCode **2.4.2** on Linux x86-64, including the terminal in VSCodium. No GUI command registration. See [compatibility](docs/compatibility.md) for earlier adapter regression coverage on 2.3.2 and 2.4.1.
 - **Ordinary workspace verifier:** bounded, protected Python `unittest` suites, `/usr/bin/python3`, `/proc`, Landlock ABI ≥3 and `libseccomp.so.2`. OpenCode `glob` needs its ripgrep helper. The helper recognizes Linux x86-64 and aarch64; this package was not tested on ARM. macOS and Windows verified execution/write-back are not supported.
 - **Other profiles:** private regression profiles cover deterministic text, a single Python function and signed multi-file Python projects, including parallel schedules. They are not prerequisites for installation. Other text files can be staged; an unsupported suite does not verify a change or authorize write-back.
 - Install only trusted plugins in trusted workspaces. A server plugin runs with your user's access. Approved content goes to the selected providers. File limits, restricted tools and secret-pattern checks do not detect every sensitive value. Natural-language scope findings are advisory.
@@ -114,10 +107,22 @@ Look for `checksPassed: true`, `reason: verified_applied`, and `application.appl
 
 ## Update and uninstall
 
-For a global registry install, use `opencode plugin check`, then `opencode plugin update @goat/opencode`. For a project pinned to an exact version, change only that entry to the approved version. For local tarballs, install the new matched pair into a **new version directory**, then switch only the GOAT path. OpenCode watches its configuration.
+For a global beta install:
 
-Before removal, use `/goat off` if you want reinstalls to start disabled. For a global registry entry use `opencode plugin remove @goat/opencode` (use the exact configured specifier for a pin). For a project or local directory remove only its GOAT entry; the dedicated candidate directory can then be discarded if no configuration uses it. Unloading a plugin is not a reset of its saved settings. Keep the host database, providers, credentials, MCP entries, other plugins and permissions.
+```sh
+opencode plugin check
+opencode plugin update @goatmr/opencode@beta
+```
+
+To uninstall globally, run `opencode plugin remove @goatmr/opencode@beta`. For a project-local pin, edit only the GOAT version to update, or remove only that entry to uninstall. OpenCode watches its configuration. Uninstalling retains GOAT's shared settings: use `/goat off` before removal if you want reinstalls to start disabled.
+
+## License and acknowledgments
+
+GOAT is licensed under the [Apache License, Version 2.0](LICENSE). See [NOTICE](NOTICE).
+The adapter uses [OpenCode](https://opencode.ai/) for model connections, permissions and plugin storage. The build uses TypeScript; workspace checks use Python and the host's Linux sandbox facilities, including libseccomp.
 
 ## Further reading
 
-[Architecture](docs/architecture.md) · [Portable core and host boundary](docs/task-6-portable-core.md) · [Workspace verification and write-back](docs/task-5-workspace.md) · [Parallel orchestration](docs/task-4-parallel.md) · [Packaging, development checks, license review and Owner test](docs/task-7-packaging.md) · [Historical milestone reports](docs/)
+[Architecture](docs/architecture.md) · [Orchestration](docs/orchestration.md) · [Verification](docs/verification.md) · [Compatibility](docs/compatibility.md) · [Roadmap](docs/roadmap.md)
+
+[Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)

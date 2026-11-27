@@ -1,5 +1,5 @@
 import { Model, type Plugin } from "@opencode/plugin"
-import { validateConfig, type ModelRef } from "@goat/core"
+import { validateConfig, type ModelRef } from "@goatmr/core"
 
 const tool = "goat_verify_text"
 // Some protocols encode the model in the URL or translate it server-side.

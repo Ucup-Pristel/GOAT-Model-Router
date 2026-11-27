@@ -1,6 +1,6 @@
 import type { Plugin } from "@opencode/plugin"
 import { decideTask, defaults, denyAllRuntimePolicy, digest, executePlan, projectSnapshot, ProjectFileRefusal,
-  RoleBudget, runtimeEligibility, validateConfig, type ModelRef, type TaskState } from "@goat/core"
+  RoleBudget, runtimeEligibility, validateConfig, type ModelRef, type TaskState } from "@goatmr/core"
 import { installConversation, wireModel } from "./conversation.js"
 import { loadTask, provision, type Workspace } from "./coding.js"
 import { authorizedProject, provisionProject, syncProject, type ProjectTask } from "./project.js"
