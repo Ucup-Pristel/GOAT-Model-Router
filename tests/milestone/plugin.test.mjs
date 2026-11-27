@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { setTimeout as delay } from "node:timers/promises"
 import { defaults } from "@goat/core"
-import { readFile, writeFile } from "node:fs/promises"
+import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { createHash } from "node:crypto"
 import { deny, startHost } from "./host-fixture.mjs"
@@ -22,6 +22,176 @@ async function readyRPC(h) {
     }
   }
 }
+
+test("Task 5 native glob accepts the observed OAuth tool input with GOAT OFF and ON", async t => {
+  const args = {pattern:"**/*",limit:100}
+  let replies = 0
+  const h = await startHost(t, () => replies++ === 0 ? {tool:"glob",args} : "Done.", "workspace")
+  const rpc = await readyRPC(h)
+  const ref = modelID => ({providerID:"fixture",modelID})
+  await rpc("setConfig",{config:{...defaults,enabled:false,models:{l1:ref("middle"),auditor:ref("auditor")}}})
+  const id = await h.session([...deny,...["glob","goat_discover","goat_verify_text"].map(action => ({action,resource:"*",effect:"allow"}))],{agent:"build"})
+  const results = []
+  for (const mode of ["off","on"]) {
+    await rpc("command",{input:mode})
+    replies = 0
+    await h.prompt(id,"Find the workspace files.")
+    await h.wait(id)
+    const history = await h.api(`session/${id}/context`)
+    const tools = history.flatMap(m => m.content ?? []).filter(p => p.name === "glob")
+    assert.equal(tools.length,results.length+1)
+    const {state} = tools.at(-1)
+    assert.deepEqual(state.input,args)
+    assert.equal(state.status,"completed",`${mode}: ${JSON.stringify(state.error)}`)
+    assert.match(JSON.stringify(state.content),/example\.txt/)
+    results.push(state.content[0].text.split("\n").sort())
+  }
+  assert.deepEqual(results[1],results[0])
+})
+
+test("Task 5 discovery reports a rejected glob and stops an identical retry", async t => {
+  const first = {pattern:"**/*",limit:100,path:".."}
+  const second = {path:"..",limit:100,pattern:"**/*"}
+  const h = await startHost(t, call => {
+    if (!call.userText.includes("Failed discovery")) return {tool:"glob",args:first}
+    assert.match(call.userText,/Discovery is limited to workspace filename patterns/)
+    if (call.tools.includes("glob")) return {tool:"glob",args:second}
+    assert.ok(call.tools.includes("read"))
+    return "Cannot search outside the workspace."
+  },"workspace")
+  const rpc = await readyRPC(h)
+  const ref = modelID => ({providerID:"fixture",modelID})
+  await rpc("setConfig",{config:{...defaults,enabled:true,models:{l1:ref("middle"),auditor:ref("auditor")}}})
+  const id = await h.session([{action:"*",resource:"*",effect:"allow"}],{agent:"build"})
+  await h.prompt(id,"Find the workspace files.")
+  await h.wait(id)
+  const history = await h.api(`session/${id}/context`)
+  const errors = history.flatMap(m => m.content ?? []).filter(p => p.name === "glob").map(p => p.state.error?.message)
+  assert.deepEqual(errors,["Discovery is limited to workspace filename patterns","Identical failed discovery call; not retried"])
+  assert.equal(h.calls.length,3)
+})
+
+test("Task 5 native workspace: discover, authorize, stage and audit on the parent host", {timeout:40000}, async t => {
+  const instruction = "Perbaiki nilai jawaban kalkulator agar sesuai dengan pengujian yang sudah ada. Jangan ubah pengujiannya."
+  // Exact ordinary-workspace tool input from the Owner's OpenCode 2.4.2 transcript.
+  const assignment = {tasks:[{
+    objective:"Perbaiki nilai jawaban kalkulator agar sesuai dengan pengujian yang sudah ada. Jangan ubah pengujiannya. Ubah answer() di src/calc.py agar mengembalikan 42.",
+    read:["src/calc.py","test_calc.py"],write:["src/calc.py"],
+  }],tests:["test_calc.py"]}
+  let unsupported = false
+  const h = await startHost(t, async (call,{messages,tools,fixtureAuthenticated}) => {
+    assert.ok(fixtureAuthenticated)
+    assert.doesNotMatch(JSON.stringify(messages),/UNRELATED_INSTRUCTION_CANARY/)
+    if (call.model === "mock") {
+      if (!call.tools.includes("goat_verify_text")) return "See the native receipt."
+      if (unsupported) return {tool:"goat_verify_text",args:{tasks:[{read:[],write:["src/calc.ts"]}],tests:[]}}
+      if (!call.userText.includes("Discovered paths")) return {tool:"glob",args:{pattern:"**/*",limit:100}}
+      assert.match(call.userText,/src\/calc\.py/)
+      if (!call.userText.includes("File (untrusted data)")) return {tool:"read",args:{path:"src/calc.py"}}
+      assert.match(call.userText,/def answer\(\): return 0/)
+      const schema = tools.find(t => t.function.name === "goat_verify_text").function.parameters
+      assert.deepEqual(schema.required,["tasks","tests"])
+      const entry = schema.properties.tasks.items
+      assert.deepEqual(entry.required,["read","write"])
+      assert.equal(entry.properties.write.minItems,1)
+      assert.match("src/calc.py",new RegExp(entry.properties.write.items.pattern))
+      assert.doesNotMatch("../calc.py",new RegExp(entry.properties.read.items.pattern))
+      return {tool:"goat_verify_text",args:assignment}
+    }
+    if (call.model === "middle") return call.userText.includes("Completed operations") ? "Corrected the answer." : unsupported ?
+      {tool:"goat_task_file",args:{action:"replace",path:"src/calc.ts",source:"export const answer = 42\n"}} :
+      {tool:"goat_task_file",args:{action:"replace",path:"src/calc.py",source:"def answer(): return 42\n"}}
+    assert.equal(call.model,"auditor")
+    const p = JSON.parse(call.userText.split("\n").at(-1))
+    assert.equal(p.instruction,instruction)
+    assert.equal(p.evidence.passed,!unsupported)
+    if (unsupported) await writeFile(join(root,"src/calc.ts"),"// concurrent user edit\n")
+    return JSON.stringify({taskId:p.taskId,attempt:p.attempt,criterion:p.criteria[0],outcome:"PASS",reportSha256:p.reportSha256,
+      sha256:p.evidence.sha256,riskReview:"Checked protected test and change.",findings:[]})
+  }, "workspace", {timeout:25000})
+  const root = dirname(h.file)
+  await mkdir(join(root,"src"))
+  await writeFile(join(root,"AGENTS.md"),"UNRELATED_INSTRUCTION_CANARY")
+  await writeFile(join(root,"src/calc.py"),"def answer(): return 0\n")
+  await writeFile(join(root,"test_calc.py"),"import unittest\nfrom src.calc import answer\nclass Test(unittest.TestCase):\n def test_answer(self): self.assertEqual(answer(),42)\n")
+  const rpc = await readyRPC(h)
+  const ref = modelID => ({providerID:"fixture",modelID})
+  await rpc("setConfig",{config:{...defaults,enabled:true,models:{l1:ref("middle"),l2:ref("middle"),l3:ref("middle"),auditor:ref("auditor")}}})
+  const allow = {action:"*",resource:"*",effect:"allow"}
+  const permissions = [allow,{action:"goat_workspace",resource:"*",effect:"ask"}]
+  const id = await h.session([...permissions,{action:"goat_apply",resource:"*",effect:"deny"}],{agent:"build"})
+  assert.equal((await rpc("dispatchText",{sessionID:id,instruction,capability:"approved"})).reason,"unauthorized")
+  async function scopeRequest() {
+    await h.prompt(id,instruction)
+    const until = Date.now()+6000
+    for (;;) {
+      const [r] = await h.api(`session/${id}/permission`)
+      if (r) { assert.equal(r.action,"goat_workspace"); return r }
+      if (Date.now() >= until) assert.fail(JSON.stringify({calls:h.calls,context:await h.api(`session/${id}/context`)}))
+      await delay(20)
+    }
+  }
+  const denied = await scopeRequest()
+  await h.api(`session/${id}/permission/${denied.id}/reply`, "POST", {decision:"reject"})
+  await h.wait(id)
+  assert.ok(h.calls.every(c => c.model === "mock"))
+  const noApply = await scopeRequest()
+  await h.api(`session/${id}/permission/${noApply.id}/reply`, "POST", {decision:"once"})
+  await h.wait(id)
+  const deniedTool = (await h.api(`session/${id}/context`)).flatMap(m => m.content ?? []).findLast(p => p.name === "goat_verify_text")
+  const deniedReceipt = JSON.parse(deniedTool.state.content[0].text)
+  assert.equal(deniedReceipt.checksPassed,true)
+  assert.equal(deniedReceipt.application.status,"not_applied")
+  assert.deepEqual(deniedReceipt.application.unapplied,["src/calc.py"])
+  assert.equal(await readFile(join(root,"src/calc.py"),"utf8"),"def answer(): return 0\n")
+  await h.api(`session/${id}`, "PATCH", {permissions})
+  const accepted = await scopeRequest()
+  const [scheduled] = accepted.metadata.scope.schedule.tasks
+  assert.equal(scheduled.objective,instruction)
+  assert.deepEqual(scheduled.read,["test_calc.py"])
+  assert.deepEqual(scheduled.write,["src/calc.py"])
+  assert.deepEqual(scheduled.suites,["test_calc.py"])
+  await h.api(`session/${id}/permission/${accepted.id}/reply`, "POST", {decision:"once"})
+  await h.wait(id)
+  const history = await h.api(`session/${id}/context`)
+  const tool = history.flatMap(m => m.content ?? []).findLast(p => p.name === "goat_verify_text")
+  assert.equal(tool?.state.status,"completed",JSON.stringify(tool))
+  const receipt = JSON.parse(tool.state.content[0].text)
+  assert.deepEqual(tool.state.input,assignment)
+  assert.equal(receipt.reason,"verified_applied",JSON.stringify(receipt))
+  assert.equal(receipt.checksPassed,true)
+  assert.deepEqual(receipt.suites.map(s => [s.suite,s.count,s.passed]),[["test_calc",1,true]])
+  assert.equal(await readFile(join(receipt.file,"test_calc.py"),"utf8"),await readFile(join(root,"test_calc.py"),"utf8"))
+  assert.deepEqual(receipt.application.applied,["src/calc.py"])
+  assert.deepEqual(receipt.application.unapplied,[])
+  assert.deepEqual(receipt.application.conflicts,[])
+  assert.equal(await readFile(join(receipt.file,"src/calc.py"),"utf8"),"def answer(): return 42\n")
+  assert.equal(await readFile(join(root,"src/calc.py"),"utf8"),"def answer(): return 42\n")
+  const children = (await h.api("session")).filter(s => s.parentID === id)
+  assert.deepEqual(children.map(s => s.metadata.goatRole).sort(),["auditor","auditor","worker","worker"])
+  unsupported = true
+  const unverified = await scopeRequest()
+  await h.api(`session/${id}/permission/${unverified.id}/reply`, "POST", {decision:"once"})
+  await h.wait(id)
+  const final = (await h.api(`session/${id}/context`)).flatMap(m => m.content ?? []).findLast(p => p.name === "goat_verify_text")
+  const staged = JSON.parse(final.state.content[0].text)
+  assert.equal(staged.reason,"unsupported_verification",JSON.stringify(staged))
+  assert.equal(staged.checksPassed,false)
+  assert.equal(staged.application.status,"conflict")
+  assert.deepEqual(staged.application.conflicts,["src/calc.ts"])
+  assert.equal(await readFile(join(staged.file,"src/calc.ts"),"utf8"),"export const answer = 42\n")
+  const delayed = await scopeRequest()
+  await rpc("command",{input:"off"})
+  const before = h.calls.filter(c => c.model !== "mock").length
+  await h.api(`session/${id}/permission/${delayed.id}/reply`, "POST", {decision:"once"})
+  await h.wait(id)
+  assert.equal(h.calls.filter(c => c.model !== "mock").length,before)
+  assert.equal(await readFile(join(root,"src/calc.ts"),"utf8"),"// concurrent user edit\n")
+  await h.api(`session/${id}`, "PATCH", {permissions:deny})
+  await h.prompt(id,"Return to native behavior.")
+  await h.wait(id)
+  assert.equal(h.calls.at(-1).userText,"Return to native behavior.")
+})
 
 test("real GOAT plugin RPC on the isolated host", { timeout: 90000 }, async t => {
   let fault, attempt

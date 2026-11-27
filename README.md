@@ -6,6 +6,8 @@ On a conversation-enabled local mock host, the primary Build agent can run a ver
 
 For project tasks, use the [signed parallel project profile and Owner launch instructions](docs/task-4-parallel.md). An explicit signed schedule allows independent native Workers to run concurrently; [ordinary ordered project plans](docs/task-3-project.md) remain sequential. The [single-file profile](docs/task-3-live-coding.md) remains available and was accepted in an Owner-operated test with direct OpenAI.
 
+In a trusted Linux workspace, [Standard workspace execution](docs/task-5-workspace.md) accepts an ordinary Build prompt. The active OpenCode host handles model authentication, discovery tools, permissions and child sessions. After protected checks and independent audit pass, GOAT applies the permitted, verified changes to the checkout and reports any conflicts or partial writes. See the [Owner calculator test](docs/task-5-workspace.md#uji-live-oleh-owner).
+
 **Manager status:** the [historical Option A audit](docs/auditor-report-task-2-option-a.md) returned FAIL in all three rounds. The subsequent targeted repair on the orchestration branch addresses the two confirmed round-3 defects: original instruction risk masked by planning, and direct release/deploy actions mistaken for documentation. See the [scoped verification and Task 3 handoff](docs/manager-repair-and-task-3-handoff.md). Advisory readiness does not authorize worker dispatch.
 
 GOAT defaults **OFF**. While OFF, the plugin exposes only the `/goat` TUI command and its RPC handlers; it does not run the decision pipeline, intercept normal prompts, create sessions, or call models.
@@ -87,7 +89,7 @@ Verify `/goat status` in the real TUI, then exercise router, mode, on, and off. 
 ## Current limitations
 
 - Task 2 does not route work to a running worker, create sessions, or invoke worker/auditor models.
-- Conversation dispatch requires the provisioned isolated profile as well as `/goat on`. The RPC-only profile and ordinary installations do not intercept prompts. Production dispatch is disabled.
+- Ordinary workspace dispatch requires Standard, Build, supported models and native permission for the task scope. Checkout application also requires native `edit`/`write` permissions and `goat_apply` for the verified change set. The signed private Task 3/4 profiles remain available.
 - Standard and Resink retain their Manager policies. The isolated RPC executes only a single ready task with a supported verifier.
 - Natural-language scope and heading heuristics are advisory. They can produce false positives or miss a phrasing; `scopeFindings` is not a security boundary.
 - `readiness: "needs_review"` prevents the decision from being declared dispatch-ready, but Task 2 never dispatches; Task 3 must enforce permissions and scope at execution time.

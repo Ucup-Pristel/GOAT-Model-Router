@@ -95,7 +95,7 @@ export async function syncProject(ws: Pick<Awaited<ReturnType<typeof provisionPr
 
 export async function provisionProject(task: ProjectTask, signal: AbortSignal) {
   const path = await mkdtemp(join(tmpdir(), "goat-worker-"))
-  if (await sandbox({ suite: null }, signal, path) !== "isolated") throw Error("Project isolation unavailable")
+  if (task.files.some(f => f.role === "test") && await sandbox({ suite: null }, signal, path) !== "isolated") throw Error("Project isolation unavailable")
   const files = new Map(task.files.map(f => [f.path, f]))
   const notYetCreated = new Set(task.files.filter(f => f.source === null).map(f => f.path))
   for (const file of files.values()) {
@@ -141,7 +141,7 @@ export async function provisionProject(task: ProjectTask, signal: AbortSignal) {
       catch (e) { if (f.source !== null || !(e instanceof ProjectFileRefusal)) throw e; after = null }
       if (after !== f.source) changes.push({ path: f.path, before: f.source, after, sha256: digest(after!) })
     }
-    return { changes, results, sha256: digest(JSON.stringify(changes)), passed: changes.length > 0 && results.every(r => r.passed) }
+    return { changes, results, sha256: digest(JSON.stringify(changes)), passed: changes.length > 0 && results.length > 0 && results.every(r => r.passed) }
   }
   const baseline = (await inspect()).results
   return { path, read, replace, inspect: async () => ({ ...await inspect(), baseline }), close: async () => {} }

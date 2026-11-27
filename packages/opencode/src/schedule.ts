@@ -10,11 +10,11 @@ export type ScheduledTask = {
 export type Schedule = { tasks: ScheduledTask[]; concurrency?: number; maxRequests?: number }
 export const taskId = (i: number) => `task-${i + 1}`
 
-export function validateSchedule(project: ProjectTask) {
+export function validateSchedule(project: ProjectTask, workspace = false) {
   const s = project.schedule
   if (s === undefined) return
   const bounded = (v: unknown, max: number) => typeof v === "number" && Number.isSafeInteger(v) && v >= 1 && v <= max
-  const list = (v: unknown): v is string[] => Array.isArray(v) && v.length <= 20 &&
+  const list = (v: unknown): v is string[] => Array.isArray(v) && (workspace || v.length <= 20) &&
     v.every(x => typeof x === "string" && x.trim() && x.length <= 512) && new Set(v).size === v.length
   if (!s || Object.keys(s).some(k => !["tasks","concurrency","maxRequests"].includes(k)) ||
     !Array.isArray(s.tasks) || !bounded(s.tasks.length, 4) ||
@@ -24,7 +24,7 @@ export function validateSchedule(project: ProjectTask) {
   const writers = new Map<string, string>()
   for (const [i, t] of s.tasks.entries()) {
     if (!t || Object.keys(t).some(k => !["objective","dependsOn","read","write","criteria","tier","suites"].includes(k)) ||
-      typeof t.objective !== "string" || !t.objective.trim() || t.objective !== t.objective.trim() || t.objective.length > 512 ||
+      typeof t.objective !== "string" || !t.objective.trim() || t.objective !== t.objective.trim() || !workspace && t.objective.length > 512 ||
       t.tier !== undefined && !["L1","L2","L3"].includes(t.tier) ||
       !list(t.dependsOn) || !t.dependsOn.every(id => ids.includes(id)) ||
       !list(t.criteria) || !t.criteria.length || !list(t.write) || !t.write.length || !list(t.read) || !list(t.suites) ||
@@ -32,7 +32,7 @@ export function validateSchedule(project: ProjectTask) {
       !t.read.every(path => !t.write.includes(path) && project.files.some(f => f.path === path)) ||
       !t.write.every(path => project.files.some(f => f.path === path && f.role === "edit"))) throw Error(`Invalid scope or dependency for ${ids[i]}`)
     for (const path of t.write) {
-      if (writers.has(path)) throw Error(`Write/write conflict: ${path}`)
+      if (writers.has(path)) throw Error(`Write/write conflict: ${ids[i]}.write lists ${path}, already assigned to ${writers.get(path)}; use one writer`)
       writers.set(path, ids[i])
     }
   }
@@ -44,7 +44,7 @@ export function validateSchedule(project: ProjectTask) {
     const prior = new Set(t.dependsOn.flatMap(id => [id, ...ancestors.get(id)!]))
     for (const path of t.read) {
       const writer = writers.get(path)
-      if (writer && !prior.has(writer)) throw Error(`Read/write conflict: ${ids[i]} requires ${writer} for ${path}`)
+      if (writer && !prior.has(writer)) throw Error(`Read/write conflict: ${ids[i]}.read lists ${path}; its writer ${writer} must be a predecessor in dependsOn`)
     }
     ancestors.set(ids[i], prior)
   }

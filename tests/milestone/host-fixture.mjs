@@ -28,6 +28,9 @@ export async function startHost(t, syntheticReply, plugin = false, options = {})
     XDG_STATE_HOME: join(root, "state"), HTTP_PROXY: "http://127.0.0.1:1", HTTPS_PROXY: "http://127.0.0.1:1",
     NO_PROXY: "localhost,127.0.0.1" }
   let host, exited
+  // The offline host uses an empty cache. Use the installed native glob
+  // helper (or system rg on PATH) without fetching a binary for the test.
+  if (plugin === "workspace") env.PATH += ":" + join(process.env.XDG_CACHE_HOME ?? join(process.env.HOME,".cache"),"opencode/bin")
   const calls = []
   let slow, slowRoleSeen = false
   const provider = createServer(async (req, res) => {
@@ -49,12 +52,13 @@ export async function startHost(t, syntheticReply, plugin = false, options = {})
       // Count even unexpected/over-budget requests before rejecting them.
       Object.assign(call, { model: id, userText })
       try {
-        if (coding) assert.ok(call.tools.every(name => ["goat_task_file", "goat_verify_text", "skill"].includes(name)))
+        if (plugin === "workspace" && call.tools.includes("goat_verify_text")) assert.ok(call.tools.every(name => ["goat_verify_text","glob","read"].includes(name)))
+        else if (coding || plugin === "workspace") assert.ok(call.tools.every(name => ["goat_task_file", "skill"].includes(name) || coding && name === "goat_verify_text" || plugin === "workspace" && id === "mock" && name === "glob"))
         else if (plugin !== "conversation") assert.equal(tools.length, 0, "synthetic sessions must not advertise tools")
         else assert.ok(call.tools.every(name => ["goat_verify_text", "skill"].includes(name)))
         call.start = performance.now()
         res.once("finish", () => { call.end = performance.now() })
-        text = await syntheticReply(call, { messages, tool_choice })
+        text = await syntheticReply(call, { messages, tools, tool_choice, fixtureAuthenticated: req.headers.authorization === "Bearer fixture-only" })
       } catch (error) {
         return res.writeHead(400).end(JSON.stringify({ error: { message: String(error) } }))
       }
@@ -67,7 +71,7 @@ export async function startHost(t, syntheticReply, plugin = false, options = {})
       const useRead = (prompt.includes("LOOP_TOOL") ? readCount < 6 : !readCount && prompt.includes("USE_TOOL"))
         && tools.some(t => t.function.name === "read")
       const batch = Array.isArray(text) ? text : [text]
-      const useGoat = (plugin === "conversation" || coding) && batch.every(t => call.tools.includes(t?.tool) ||
+      const useGoat = (plugin === "conversation" || plugin === "workspace" || coding) && batch.every(t => call.tools.includes(t?.tool) ||
         options.attemptSubagent && t?.tool === "subagent")
       const delta = useGoat ? { tool_calls: batch.map((t, index) => ({ index, type: "function", id: `goat_${calls.length}_${index}`,
         function: { name: t.tool, arguments: JSON.stringify(t.args ?? {}) } })) } : useRead ? { tool_calls: [{ index: 0, type: "function", id: `read_${readCount}`,
@@ -104,7 +108,8 @@ export async function startHost(t, syntheticReply, plugin = false, options = {})
   const endpoint = `http://127.0.0.1:${provider.address().port}/v1`
   if (plugin) {
     await installPrivatePlugin(project)
-    Object.assign(env, { GOAT_TEXT_PROJECT: project, GOAT_TEXT_CAPABILITY: randomBytes(32).toString("hex"), GOAT_TEXT_PROVIDER: endpoint })
+    if (plugin !== "workspace") Object.assign(env, {
+      GOAT_TEXT_PROJECT: project, GOAT_TEXT_CAPABILITY: randomBytes(32).toString("hex"), GOAT_TEXT_PROVIDER: endpoint })
     if (plugin === "conversation") env.GOAT_TEXT_CONVERSATION = "1"
     if (coding) {
       delete env.GOAT_TEXT_PROVIDER

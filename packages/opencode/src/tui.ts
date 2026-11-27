@@ -20,8 +20,8 @@ export default Plugin.define({
               const { config } = await goat.getConfig({}, location) as { config: GoatConfig }
             const [verb, ...args] = (input ?? "status").trim().split(/\s+/)
             if (verb === "on" || verb === "off") {
-              await goat.setConfig({ config: { ...config, enabled: verb === "on" } }, location)
-              await context.ui.dialog.alert({ title: `GOAT ${verb}`, message: `GOAT ${verb.toUpperCase()} saved.${verb === "on" ? " In the private coding host, send the authorized task to Build." : ""}` })
+              const { text } = await goat.command({ input: verb }, location) as { text: string }
+              await context.ui.dialog.alert({ title: `GOAT ${verb}`, message: text })
               return
             }
             if (verb === "mode") {

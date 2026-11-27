@@ -2,6 +2,7 @@ import { Plugin } from "@opencode/plugin"
 import { decideTask, defaults, modelStatus, validateConfig } from "@goat/core"
 import { Goat } from "@goat/opencode/rpc"
 import { textRuntime } from "./text-runtime.js"
+import { workspaceBlock } from "./workspace.js"
 
 export default Plugin.define({
   id: "goat.model-router",
@@ -54,12 +55,14 @@ export default Plugin.define({
           config = { ...config, enabled: verb === "on" }
           await ctx.storage.set("config", config)
           if (verb === "off") dispatchText.cancel()
-          return { text: `GOAT ${verb.toUpperCase()}. In the isolated conversation profile, use the Build agent for verified text tasks.` }
+          const profile = dispatchText.workspace ? workspaceBlock : "Use the configured private execution profile."
+          return { text: verb === "on" ? `GOAT ON. ${profile}` : "GOAT OFF." }
         }
         if (verb === "mode") {
           const mode = args[0]
           if (mode !== "standard" && mode !== "resink") return { text: "Usage: /goat mode standard|resink" }
           config = { ...config, mode }
+          dispatchText.cancel()
           await ctx.storage.set("config", config)
           return { text: `GOAT mode: ${mode}. Production dispatch disabled.` }
         }
@@ -67,7 +70,8 @@ export default Plugin.define({
           const latest = await ctx.storage.get("lastCodingTurn")
           const progress = dispatchText.status()
           const available = (await ctx.model.list()).data.map((model) => ({ providerID: model.providerID, modelID: model.id }))
-          return { text: `Enabled: ${config.enabled}\nMode: ${config.mode}\nManager: ${config.inheritManagerModel ? "inherit session model" : modelStatus(config.models.manager, available)}\nL1: ${modelStatus(config.models.l1, available)}\nL2: ${modelStatus(config.models.l2, available)}\nL3: ${modelStatus(config.models.l3, available)}\nAuditor: ${modelStatus(config.models.auditor, available)}\nOrchestration: provisioned profiles only; production disabled${progress ? `\nTask execution: ${JSON.stringify(progress)}` : ""}${latest ? `\nLast coding turn: ${JSON.stringify(latest)}` : ""}` }
+          const profile = dispatchText.workspace ? workspaceBlock : "provisioned profiles only; production disabled"
+          return { text: `Enabled: ${config.enabled}\nMode: ${config.mode}\nManager: ${config.inheritManagerModel ? "inherit session model" : modelStatus(config.models.manager, available)}\nL1: ${modelStatus(config.models.l1, available)}\nL2: ${modelStatus(config.models.l2, available)}\nL3: ${modelStatus(config.models.l3, available)}\nAuditor: ${modelStatus(config.models.auditor, available)}\nOrchestration: ${profile}${progress ? `\nTask execution: ${JSON.stringify(progress)}` : ""}${latest ? `\nLast coding turn: ${JSON.stringify(latest)}` : ""}` }
         }
         if (verb === "router") {
           return { text: "Use the interactive /goat router menu to configure models." }
@@ -160,6 +164,7 @@ export default Plugin.define({
         }
       },
     })
+    return () => dispatchText.cancel()
   },
 })
 

@@ -5,27 +5,34 @@ import { installConversation, wireModel } from "./conversation.js"
 import { loadTask, provision, type Workspace } from "./coding.js"
 import { authorizedProject, digest, projectSnapshot, ProjectFileRefusal, provisionProject, syncProject, type ProjectTask } from "./project.js"
 import { openTrace } from "./trace.js"
+import { installWorkspace } from "./workspace.js"
 import { access, writeFile } from "node:fs/promises"
 import { isDeepStrictEqual } from "node:util"
 
 const deny = [{ action: "*", resource: "*", effect: "deny" }] as const
 const agent = "goat-local-text"
 const budget = { maxModelRequests: 4, maxDurationMs: 8000, maxWorkerRetries: 1, maxAuditorRetries: 1, maxExecutionDepth: 1 }
-type Request = { instruction: string; sessionID: string; capability: string; tier?: "L1" | "L2" | "L3" }
+type DispatchRequest = { instruction: string; sessionID: string; capability: string; tier?: "L1" | "L2" | "L3" }
 type FileOutcome = { input: unknown; status: "completed" | "error" }
 
 export async function textRuntime(ctx: Plugin.Context) {
   // Process-provisioned capability for a disposable host; project storage,
   // caller-supplied paths and /goat on cannot activate this profile.
-  const { GOAT_TEXT_PROJECT: project, GOAT_TEXT_CAPABILITY: capability, GOAT_TEXT_PROVIDER: endpoint } = process.env
-  const local = !!project && project === ctx.location?.directory && !!capability && capability.length >= 32 &&
+  const { GOAT_TEXT_PROJECT: provisioned, GOAT_TEXT_CAPABILITY: capability, GOAT_TEXT_PROVIDER: endpoint } = process.env
+  const project = provisioned ?? ctx.location?.directory
+  const local = !!provisioned && project === ctx.location?.directory && !!capability && capability.length >= 32 &&
     !!endpoint && /^http:\/\/127\.0\.0\.1:[1-9]\d{0,4}\/v1$/.test(endpoint)
-  const live = !!project && project === ctx.location?.directory && !!capability && capability.length >= 32 &&
+  const signed = !!provisioned && project === ctx.location?.directory && !!capability && capability.length >= 32 &&
     !endpoint && ["coding", "project"].includes(process.env.GOAT_LIVE_PROFILE ?? "") && !!process.env.GOAT_CODE_MANIFEST
-  const multi = live && process.env.GOAT_LIVE_PROFILE === "project"
+  const ordinary = !provisioned && !!ctx.location
+  const live = signed || ordinary
+  const multi = ordinary || signed && process.env.GOAT_LIVE_PROFILE === "project"
   const manifest = process.env.GOAT_CODE_MANIFEST!
   const task = live && !multi ? await loadTask(manifest) : undefined
-  const trace = multi ? openTrace() : undefined
+  let trace = multi && !ordinary ? openTrace() : undefined
+  // For ordinary children use only the assignment and actual snapshot tool
+  // results. Narrow native context before the selected adapter serializes it.
+  const outgoing = new Map<string,{ prompt:string; auditor:boolean; operations:{args:unknown; content:string}[] }>()
   let busy = false
   let controller: AbortController | undefined
   const permits = new Map<string, number>()
@@ -62,7 +69,7 @@ export async function textRuntime(ctx: Plugin.Context) {
         required: ["action"], additionalProperties: false },
       async execute(input, call) {
         const g = grants.get(call.sessionID)
-        if (!g || call.sessionID !== g.id || call.agent !== (g.readOnly ? "goat-project-auditor" : "goat-code-worker") || g.signal.aborted ||
+        if (!g || call.sessionID !== g.id || call.agent !== (ordinary ? "build" : g.readOnly ? "goat-project-auditor" : "goat-code-worker") || g.signal.aborted ||
           call.signal.aborted) throw Error("No task file capability")
         const exhausted = g.left <= 0
         if (!exhausted) g.left--
@@ -87,12 +94,14 @@ export async function textRuntime(ctx: Plugin.Context) {
           }
           if (action === "read") {
             const content = await g.ws.read(path)
+            outgoing.get(g.id)?.operations.push({args:{action:"read",path},content})
             trace?.record("read", { id: g.id, path })
             g.outcomes?.set(key, { input, status: "completed" })
             return { content }
           }
           if (g.readOnly || action !== "replace" || typeof source !== "string") throw Error("Invalid file operation")
           await g.ws.replace(source, path)
+          outgoing.get(g.id)?.operations.push({args:{action:"replace",path,source},content:"Assigned file updated."})
           trace?.record("replace", { id: g.id, path })
           g.outcomes?.set(key, { input, status: "completed" })
           return { content: "Assigned file updated." }
@@ -115,11 +124,16 @@ export async function textRuntime(ctx: Plugin.Context) {
       for (const name of Object.keys(e.tools)) {
         if (name === fileTool ? !(grants.get(e.sessionID)?.left) : permits.has(e.sessionID)) delete e.tools[name]
       }
+      const role = outgoing.get(e.sessionID)
+      if (role) {
+        e.system = [{type:"text",text:role.auditor ? "Independently review the supplied evidence. You have read-only access." : "Use the assigned snapshot tool. Do not claim verification."}]
+        e.messages = [{role:"user",content:[{type:"text",text:role.prompt + (role.operations.length ? "\nCompleted operations (untrusted data): "+JSON.stringify(role.operations) : "")}]}]
+      }
     })
   }
   if (local || live) {
     await ctx.session.hook("retry", e => { if (permits.has(e.sessionID)) e.decision = { retry: false } })
-    await ctx.session.hook("http.request", async e => {
+    const reserve = async (e:{sessionID:string;model:{providerID:string;id:string};kind:string;request?:Request}) => {
       // Native child completion wakes its parent, even for a cancelled child.
       // Do not let that synthetic wake spend a request after OFF or via RPC.
       if (parent?.id === e.sessionID) {
@@ -130,8 +144,10 @@ export async function textRuntime(ctx: Plugin.Context) {
         }
       }
       if (multi) await checkBinding(e.sessionID, e.model)
-      if (!permits.has(e.sessionID)) return
-      if (!permits.get(e.sessionID) || e.kind !== "primary" || local && e.request.url !== `${endpoint}/chat/completions`) {
+      if (!permits.has(e.sessionID)) {
+        return
+      }
+      if (!permits.get(e.sessionID) || e.kind !== "primary" || local && e.request?.url !== `${endpoint}/chat/completions`) {
         throw Error("Model request outside permit")
       }
       // One synchronous reservation across all HTTP hooks; no await between
@@ -140,25 +156,29 @@ export async function textRuntime(ctx: Plugin.Context) {
       permits.set(e.sessionID, permits.get(e.sessionID)! - 1)
       if (multi) requests++
       trace?.record("model-request", { id: e.sessionID, model: e.model.id, provider: e.model.providerID, requests })
-      if (live) wire.get(e.sessionID)?.push(await wireModel(e.request))
-    })
+      if (live) wire.get(e.sessionID)?.push(ordinary || !e.request ? null : await wireModel(e.request))
+    }
+    await ctx.session.hook("http.request", reserve)
     if (multi) await ctx.session.hook("http.response", e => {
       if (permits.has(e.sessionID)) trace!.record("model-response", { id: e.sessionID, status: e.response.status })
     })
-    if (live) await ctx.session.hook("experimental.ws.handshake", async e => {
+    if (ordinary) await ctx.session.hook("experimental.ws.handshake",reserve)
+    else if (live) await ctx.session.hook("experimental.ws.handshake", async e => {
       if (permits.has(e.sessionID) || e.agent === "build" && validateConfig(await ctx.storage.get("config")).enabled) throw Error("Coding profile requires HTTP session requests")
     })
   }
-  const dispatch = async (input: unknown, caller: AbortSignal, primaryModel?: ModelRef, managerSteps?: string[]) => {
+  const dispatch = async (input: unknown, caller: AbortSignal, primaryModel?: ModelRef, managerSteps?: string[],
+    native?: {task: ProjectTask; current:()=>Promise<void>}) => {
     const config = validateConfig(await ctx.storage.get("config") ?? defaults)
     if (!config.enabled) return { status: "bypassed", reason: "off" }
-    const req = input as Request
-    if (!(local || live) || req.capability !== capability) {
+    const req = input as DispatchRequest
+    if (ordinary ? !native : !(local || signed) || req.capability !== capability) {
       trace?.record("authorization-denied")
       return { status: "blocked", reason: "unauthorized" }
     }
     if (busy) { trace?.record("busy"); return { status: "blocked", reason: "busy" } }
     busy = true
+    if (ordinary) trace = openTrace()
     progress = undefined
     const ids: Partial<Record<"worker" | "auditor", string>> = {}
     const states: TaskState[] = ["queued", "classifying"]
@@ -179,7 +199,7 @@ export async function textRuntime(ctx: Plugin.Context) {
       const source = await ctx.session.get({ sessionID: req.sessionID })
       if (source.location.directory !== project || source.parentID || source.metadata?.goatRole) throw Error("Invalid source session or execution depth")
       if (multi) {
-        try { assignment = await authorizedProject(manifest, project!, req.instruction) }
+        try { assignment = native?.task ?? await authorizedProject(manifest, project!, req.instruction) }
         catch (e) { trace!.record("authorization-denied"); throw e }
       }
       const schedule = assignment?.schedule
@@ -211,7 +231,7 @@ export async function textRuntime(ctx: Plugin.Context) {
       if (!manager || !worker || !auditor || worker.modelID === auditor.modelID && worker.providerID === auditor.providerID) throw Error("Missing or non-independent role assignment")
       const provider = local ? (await ctx.provider.get({ providerID: "fixture" })).data : undefined
       if (provider && (provider.package !== "@opencode/ai/providers/openai-compatible" || provider.settings?.baseURL !== endpoint) ||
-          (await ctx.agent.get({ agentID: agent })).data.steps !== 1) throw Error("Invalid execution profile")
+          !ordinary && (await ctx.agent.get({ agentID: agent })).data.steps !== 1) throw Error("Invalid execution profile")
       for (const ref of [manager, auditor, ...plan.decisions.map(d => d.model)]) {
         if (!ref || ref !== auditor && ref !== manager && ref.modelID === auditor.modelID && ref.providerID === auditor.providerID) throw Error("Non-independent assignment")
         const m = models.find(m => m.providerID === ref.providerID && m.id === ref.modelID)
@@ -224,7 +244,7 @@ export async function textRuntime(ctx: Plugin.Context) {
       if (assignment) {
         if (source.agent !== "build") throw Error("Project Manager must use Build")
         // One signed launch, one execution, also across plugin reload/parallel hosts.
-        await writeFile(`${manifest}.spent`, plan.intent.id, { flag: "wx", mode: 0o600 })
+        if (!ordinary) await writeFile(`${manifest}.spent`, plan.intent.id, { flag: "wx", mode: 0o600 })
         const sourceHistory = await ctx.session.context({ sessionID: req.sessionID })
         parent = { id: req.sessionID, user: sourceHistory.filter(m => m.type === "user").at(-1)?.id, conversational: !!primaryModel, signal }
         trace!.record("authorized", { intent: plan.intent.id, session: req.sessionID })
@@ -246,7 +266,7 @@ export async function textRuntime(ctx: Plugin.Context) {
         if (!validateConfig(await ctx.storage.get("config")).enabled) throw Error("GOAT switched off")
         const write = role === "worker" && (snapshot ?? ws)
         const fileAccess = write || (multi && ws)
-        const who = write ? "goat-code-worker" : multi ? "goat-project-auditor" : agent
+        const who = ordinary ? "build" : write ? "goat-code-worker" : multi ? "goat-project-auditor" : agent
         const rules = fileAccess ? [...deny, { action: fileTool, resource: "*", effect: "allow" as const }] : deny
         const taskState = role === "worker" ? progress?.tasks[i] : undefined
         const identity = { ...(taskState && { taskId: taskState.taskId, tier: taskState.tier }), attempt }
@@ -258,9 +278,10 @@ export async function textRuntime(ctx: Plugin.Context) {
         const previous = (await ctx.session.context({ sessionID })).length
         roles.set(sessionID, role)
         const steps = (await ctx.agent.get({ agentID: who })).data.steps
-        if (multi ? steps !== (write ? 24 : 6) : write ? steps !== 3 && steps !== 5 : steps !== 1) throw Error("Invalid role step limit")
+        if (!ordinary && (multi ? steps !== (write ? 24 : 6) : write ? steps !== 3 && steps !== 5 : steps !== 1)) throw Error("Invalid role step limit")
         let invalid = false
         async function assertProfile(wireRef?: { providerID: string; id: string }) {
+          await native?.current()
           const info = await ctx.session.get({ sessionID })
           if (invalid || wireRef && (wireRef.providerID !== ref.providerID || wireRef.id !== ref.modelID) ||
             info.location.directory !== project || info.parentID !== (multi ? req.sessionID : undefined) || info.agent !== who || info.model?.id !== ref.modelID ||
@@ -297,6 +318,7 @@ export async function textRuntime(ctx: Plugin.Context) {
           else text += `\nUse ${fileTool} to read ${task!.filename}, then replace its entire Python source. No imports requiring filesystem access. Return a brief change summary.`
         }
         turns++
+        if (ordinary) outgoing.set(sessionID,{prompt:text,auditor:role === "auditor",operations:[]})
         if (multi) pendingPrompts.set(sessionID, text)
         try {
           // Promise-plugin session methods in 2.3.2 do not forward AbortSignal.
@@ -361,7 +383,7 @@ export async function textRuntime(ctx: Plugin.Context) {
         if (role === "worker") output = result
         return result
       }
-      const reason = await verifiedText(plan, expected ?? "", { states, remaining: () => multi ? maxRequests - requests : budget.maxModelRequests - turns,
+      let reason = await verifiedText(plan, expected ?? "", { states, remaining: () => multi ? maxRequests - requests : budget.maxModelRequests - turns,
         project: multi, schedule, auditContext: () => ({ schedule, integrations, traceHead: trace?.head,
           requests: [...roles].map(([sessionID,role]) => ({ sessionID, role, models: wire.get(sessionID) })) }),
         interruptWorkers: () => workerFailure.abort(),
@@ -406,6 +428,8 @@ export async function textRuntime(ctx: Plugin.Context) {
             return report
           } catch (e) { if (taskState) taskState.state = "failed"; throw e }
         } })
+      if (ordinary && evidence && !evidence.results.length &&
+          ["insufficient-evidence","unreproduced-or-out-of-scope","rejected"].includes(reason)) reason = "unsupported_verification"
       if (reason === "accepted" && schedule) {
         await syncProject(ws!, disk!, integrated!, signal, assignment!.expires)
       }
@@ -432,6 +456,7 @@ export async function textRuntime(ctx: Plugin.Context) {
     } finally {
       for (const task of progress?.tasks ?? []) if (task.state === "waiting") task.state = "blocked"
       grants.clear()
+      outgoing.clear()
       await ws?.close()
       if (!quarantined && !unresponsive) {
         for (const id of roles.keys()) { permits.delete(id); wire.delete(id); bindings.delete(id); pendingPrompts.delete(id) }
@@ -461,15 +486,17 @@ export async function textRuntime(ctx: Plugin.Context) {
     try { return await Promise.race([execute(), stopped]) }
     finally { clearTimeout(timer); signal.removeEventListener("abort", onAbort) }
   }
-  if ((local || live) && process.env.GOAT_TEXT_CONVERSATION === "1") {
-    await installConversation(ctx, project, endpoint, (sessionID, instruction, signal, model, steps) =>
+  if ((local || signed) && process.env.GOAT_TEXT_CONVERSATION === "1") {
+    await installConversation(ctx, project!, endpoint, (sessionID, instruction, signal, model, steps) =>
       dispatch({ sessionID, instruction, capability }, signal, model, steps), multi ? async instruction => {
         try {
-          await authorizedProject(manifest, project, instruction)
+          await authorizedProject(manifest, project!, instruction)
           try { await access(`${manifest}.spent`); throw Error("Owner grant spent") }
           catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e }
         } catch (e) { trace!.record("authorization-denied"); throw e }
       } : undefined)
   }
-  return Object.assign(dispatch, { cancel: () => controller?.abort(), status: () => progress })
+  const workspace = ordinary ? await installWorkspace(ctx,(task,sessionID,model,signal,current) =>
+    dispatch({sessionID,instruction:task.instruction},signal,model,undefined,{task,current})) : undefined
+  return Object.assign(dispatch, { cancel: () => { controller?.abort(); workspace?.cancel() }, status: () => workspace?.status() ?? progress, workspace: !!workspace })
 }
