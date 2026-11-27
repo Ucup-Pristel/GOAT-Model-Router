@@ -1,7 +1,7 @@
 import { appendFileSync, mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { digest } from "./project.js"
+import { digest } from "@goat/core"
 
 // Synchronous append serializes concurrent hooks in this private host. No
 // model inputs or file contents belong in the journal. The receipt anchors it.

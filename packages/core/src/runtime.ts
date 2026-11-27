@@ -22,6 +22,32 @@ export type RuntimeBudget = {
   readonly maxExecutionDepth: number
 }
 
+// Per dispatch. Reserve synchronously at the actual metered boundary, including
+// follow-up model requests within a single Worker or Auditor turn.
+export class RoleBudget {
+  private used = 0
+  private readonly tokens = new Map<string, number>()
+
+  constructor(readonly limit: number) {
+    if (!Number.isSafeInteger(limit) || limit < 0) throw Error("Invalid role request budget")
+  }
+
+  get requests() { return this.used }
+  get remaining() { return this.limit - this.used }
+  get observedTokens() { return [...this.tokens.values()].reduce((a, b) => a + b, 0) }
+
+  reserve() {
+    if (!this.remaining) throw Error("Role request budget exhausted")
+    return ++this.used
+  }
+
+  observe(id: string, cumulative: number) {
+    if (!Number.isSafeInteger(cumulative) || cumulative < 0) throw Error("Invalid observed role token count")
+    this.tokens.set(id, Math.max(this.tokens.get(id) ?? 0, cumulative))
+    if (this.observedTokens > 128000) throw Error("Observed role token budget exceeded")
+  }
+}
+
 export type RuntimeAuthorizationPolicy = {
   readonly hostAllowed: readonly RuntimeOperation[]
   readonly taskAllowed: readonly RuntimeOperation[]

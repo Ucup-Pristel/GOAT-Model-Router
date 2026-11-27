@@ -1,9 +1,9 @@
 import type { Plugin } from "@opencode/plugin"
-import { compileWorkerPrompt, decideTask, defaults, denyAllRuntimePolicy, runtimeEligibility, validateConfig, type ModelRef, type TaskState } from "@goat/core"
-import { verifiedText } from "./verified-text.js"
+import { decideTask, defaults, denyAllRuntimePolicy, digest, executePlan, projectSnapshot, ProjectFileRefusal,
+  RoleBudget, runtimeEligibility, validateConfig, type ModelRef, type TaskState } from "@goat/core"
 import { installConversation, wireModel } from "./conversation.js"
 import { loadTask, provision, type Workspace } from "./coding.js"
-import { authorizedProject, digest, projectSnapshot, ProjectFileRefusal, provisionProject, syncProject, type ProjectTask } from "./project.js"
+import { authorizedProject, provisionProject, syncProject, type ProjectTask } from "./project.js"
 import { openTrace } from "./trace.js"
 import { installWorkspace } from "./workspace.js"
 import { access, writeFile } from "node:fs/promises"
@@ -35,7 +35,7 @@ export async function textRuntime(ctx: Plugin.Context) {
   const outgoing = new Map<string,{ prompt:string; auditor:boolean; operations:{args:unknown; content:string}[] }>()
   let busy = false
   let controller: AbortController | undefined
-  const permits = new Map<string, number>()
+  const permits = new Map<string, { left: number; reserve(): number } | null>()
   const wire = new Map<string, (string | null)[]>()
   const fileTool = "goat_task_file"
   type Files = Workspace | Awaited<ReturnType<typeof provisionProject>>
@@ -47,7 +47,6 @@ export async function textRuntime(ctx: Plugin.Context) {
   const bindings = new Map<string, (ref?: { providerID: string; id: string }) => Promise<void>>()
   const pendingPrompts = new Map<string, string>()
   let parent: { id: string; user?: string; conversational: boolean; signal: AbortSignal } | undefined
-  let requests = 0, maxRequests = 48
   async function checkBinding(id: string, ref?: { providerID: string; id: string }) {
     const check = bindings.get(id)
     if (check) await check(ref)
@@ -144,17 +143,15 @@ export async function textRuntime(ctx: Plugin.Context) {
         }
       }
       if (multi) await checkBinding(e.sessionID, e.model)
-      if (!permits.has(e.sessionID)) {
-        return
-      }
-      if (!permits.get(e.sessionID) || e.kind !== "primary" || local && e.request?.url !== `${endpoint}/chat/completions`) {
+      const permit = permits.get(e.sessionID)
+      if (permit === undefined) return
+      if (!permit?.left || e.kind !== "primary" || local && e.request?.url !== `${endpoint}/chat/completions`) {
         throw Error("Model request outside permit")
       }
       // One synchronous reservation across all HTTP hooks; no await between
       // the shared limit check and consuming this request.
-      if (multi && requests >= maxRequests) throw Error("Role request budget exhausted")
-      permits.set(e.sessionID, permits.get(e.sessionID)! - 1)
-      if (multi) requests++
+      const requests = multi ? permit.reserve() : 0
+      permit.left--
       trace?.record("model-request", { id: e.sessionID, model: e.model.id, provider: e.model.providerID, requests })
       if (live) wire.get(e.sessionID)?.push(ordinary || !e.request ? null : await wireModel(e.request))
     }
@@ -191,7 +188,7 @@ export async function textRuntime(ctx: Plugin.Context) {
     const external = AbortSignal.any([caller, deadline, controller.signal])
     const workerFailure = new AbortController()
     const signal = AbortSignal.any([external, workerFailure.signal])
-    requests = 0
+    let roleBudget = new RoleBudget(multi ? 48 : budget.maxModelRequests)
     let unresponsive = false
     const execute = async () => {
     try {
@@ -203,12 +200,12 @@ export async function textRuntime(ctx: Plugin.Context) {
         catch (e) { trace!.record("authorization-denied"); throw e }
       }
       const schedule = assignment?.schedule
-      maxRequests = schedule?.maxRequests ?? 48
+      if (schedule?.maxRequests !== undefined) roleBudget = new RoleBudget(schedule.maxRequests)
       const integrated = assignment?.files.map(f => ({ ...f }))
       const disk = assignment?.files.map(f => ({ ...f }))
       if (task && req.instruction !== task.instruction) throw Error("Instruction outside provisioned task")
       const models = (await ctx.model.list()).data.filter(m => m.enabled && (live || m.providerID === "fixture"))
-      const availableModels = models.map(m => ({ providerID: m.providerID, modelID: m.id }))
+      const availableModels = models.map(m => ({ providerID: m.providerID, modelID: m.id, tools: m.capabilities.tools }))
       const manager = config.inheritManagerModel
         ? primaryModel ?? (source.model && { providerID: source.model.providerID, modelID: source.model.id })
         : config.models.manager
@@ -248,20 +245,18 @@ export async function textRuntime(ctx: Plugin.Context) {
         const sourceHistory = await ctx.session.context({ sessionID: req.sessionID })
         parent = { id: req.sessionID, user: sourceHistory.filter(m => m.type === "user").at(-1)?.id, conversational: !!primaryModel, signal }
         trace!.record("authorized", { intent: plan.intent.id, session: req.sessionID })
-        trace!.record("budget", { maxRoleRequests: maxRequests, tokenStop: 128000, deadlineMs: 300000, maxRework: 1 })
+        trace!.record("budget", { maxRoleRequests: roleBudget.limit, tokenStop: 128000, deadlineMs: 300000, maxRework: 1 })
         ws = await provisionProject(assignment, signal)
         progress = { status: "running", tasks: plan.tasks.map((t,i) => ({ taskId: t.id, objective: t.objective,
           dependsOn: schedule?.tasks[i].dependsOn ?? (i ? [plan.tasks[i-1].id] : []), state: "waiting", attempt: 0,
           tier: plan.decisions[i].tier, model: plan.decisions[i].model })) }
       }
-      const usage = new Map<string, number>()
       let lastRoute = route
       const integrations: { taskId: string; sessionID?: string; attempt: number; tier: string; model: ModelRef;
         inputs: { path: string; sha256: string | null }[]; changes: { path: string; sha256: string }[] }[] = []
-      async function turn(role: "worker" | "auditor", ref: ModelRef, text: string, i: number, attempt: number,
+      async function turn(role: "worker" | "auditor", ref: ModelRef, text: string, i: number, attempt: number, reserve: () => number,
         snapshot?: ReturnType<typeof projectSnapshot>) {
         signal.throwIfAborted()
-        if (multi && requests >= maxRequests) throw Error("Role request budget exhausted")
         if (assignment && Date.now() >= assignment.expires) throw Error("Owner authorization expired")
         if (!validateConfig(await ctx.storage.get("config")).enabled) throw Error("GOAT switched off")
         const write = role === "worker" && (snapshot ?? ws)
@@ -292,9 +287,9 @@ export async function textRuntime(ctx: Plugin.Context) {
           }
           if (multi) {
             if (Date.now() >= assignment!.expires) throw Error("Owner authorization expired")
-            usage.set(sessionID, Math.max(usage.get(sessionID) ?? 0, info.tokens.input + info.tokens.output + info.tokens.reasoning + info.tokens.cache.read + info.tokens.cache.write))
-            const observed = [...usage.values()].reduce((a,b) => a+b, 0)
-            if (observed > 128000) { trace!.record("budget-exceeded", { observed }); throw Error("Observed role token budget exceeded") }
+            try {
+              roleBudget.observe(sessionID, info.tokens.input + info.tokens.output + info.tokens.reasoning + info.tokens.cache.read + info.tokens.cache.write)
+            } catch (error) { trace!.record("budget-exceeded", { observed: roleBudget.observedTokens }); throw error }
             signal.throwIfAborted()
             if (JSON.stringify(validateConfig(await ctx.storage.get("config"))) !== JSON.stringify(config)) {
               invalid = true; throw Error("GOAT configuration changed")
@@ -308,7 +303,8 @@ export async function textRuntime(ctx: Plugin.Context) {
         signal.throwIfAborted()
         const files = snapshot?.files ?? assignment?.files
         const cap = multi ? write ? Math.min(22, 3 + files!.length * 2) : 4 : write ? 3 : 1
-        permits.set(sessionID, cap)
+        const permit = { left: cap, reserve }
+        permits.set(sessionID, permit)
         if (live && !wire.has(sessionID)) wire.set(sessionID, [])
         const outcomes = multi ? new Map<string, FileOutcome>() : undefined
         if (fileAccess) {
@@ -317,6 +313,7 @@ export async function textRuntime(ctx: Plugin.Context) {
           if (multi) text = (write ? `${text}\n${scope}\nMake scoped edits. The host runs protected unittest suites after the changes.` : `${scope} You can read evidence files only.\n${text}`)
           else text += `\nUse ${fileTool} to read ${task!.filename}, then replace its entire Python source. No imports requiring filesystem access. Return a brief change summary.`
         }
+        if (!multi) reserve() // Private single-task profiles meter turns.
         turns++
         if (ordinary) outgoing.set(sessionID,{prompt:text,auditor:role === "auditor",operations:[]})
         if (multi) pendingPrompts.set(sessionID, text)
@@ -332,7 +329,7 @@ export async function textRuntime(ctx: Plugin.Context) {
           } finally { signal.removeEventListener("abort", abort) }
           signal.throwIfAborted()
         } catch (error) {
-          permits.set(sessionID, 0)
+          permit.left = 0
           grants.delete(sessionID)
           // Keep the lock if the native execution cannot be drained.
           trace?.record("cancel", { sessionID })
@@ -348,8 +345,8 @@ export async function textRuntime(ctx: Plugin.Context) {
         }
         grants.delete(sessionID)
         await assertProfile()
-        if (permits.get(sessionID) === cap || (await ctx.session.get({ sessionID })).outcome !== "succeeded") throw Error("Unverified native turn")
-        permits.set(sessionID, 0)
+        if (permit.left === cap || (await ctx.session.get({ sessionID })).outcome !== "succeeded") throw Error("Unverified native turn")
+        permit.left = 0
         const round = (await ctx.session.context({ sessionID })).slice(previous)
         const prompts = round.filter(m => m.type === "user")
         if (prompts.length !== 1 || prompts[0].text !== text || round.some(m => m.type === "synthetic")) throw Error("Unexpected session input")
@@ -383,40 +380,31 @@ export async function textRuntime(ctx: Plugin.Context) {
         if (role === "worker") output = result
         return result
       }
-      let reason = await verifiedText(plan, expected ?? "", { states, remaining: () => multi ? maxRequests - requests : budget.maxModelRequests - turns,
-        project: multi, schedule, auditContext: () => ({ schedule, integrations, traceHead: trace?.head,
+      let reason = await executePlan(plan, {
+        states, budget: roleBudget, rework: true, models: config.models,
+        verification: assignment ? { kind: "project", project: assignment } : task ? { kind: "cases" } : { kind: "text", expected: expected! },
+      }, {
+        signal, inventory: availableModels, auditContext: () => ({ schedule, integrations, traceHead: trace?.head,
           requests: [...roles].map(([sessionID,role]) => ({ sessionID, role, models: wire.get(sessionID) })) }),
         interruptWorkers: () => workerFailure.abort(),
         onFindings: value => { review = value },
-        ...(ws && { inspect: async () => {
+        verification: ws ? { suiteResource: suite => suite.replaceAll(".", "/") + ".py", inspect: async () => {
           if (progress) progress.status = "verifying"
           if (schedule) await syncProject(ws!, disk!, integrated!, signal, assignment!.expires)
           evidence = await ws!.inspect()
           trace?.record("checks", { sha256: evidence.sha256, passed: evidence.passed })
           return evidence
-        } }),
-        rework: true, turn: async (role, text, i, attempt) => {
-          if (role === "auditor") return turn(role, auditor, text, i, attempt)
+        } } : null,
+        audit: ({ text, model, attempt, reserve }) => turn("auditor", model, text, 0, attempt, reserve),
+        runWorker: async ({ text, index: i, attempt, model: selected, tier, scope, reserve }) => {
           const d = plan.decisions[i]
-          let selected = d.model!, tier = d.tier
-          if (multi && attempt === 2 && d.tier !== "L3") {
-            const nextTier = d.tier === "L1" ? "L2" : "L3"
-            const higher = config.models[nextTier === "L2" ? "l2" : "l3"]
-            if (higher && (higher.modelID !== auditor.modelID || higher.providerID !== auditor.providerID) &&
-              models.some(m => m.providerID === higher.providerID && m.id === higher.modelID && m.capabilities.tools)) {
-              tier = nextTier; selected = higher
-              states.push("escalated")
-              text = compileWorkerPrompt({ ...plan.tasks[i], tier }, tier, plan.intent).text + text.slice(plan.prompts[i].text.length)
-              states.push("delegated")
-            }
-          }
           lastRoute = { ...d, model: selected, tier }
           const taskState = progress?.tasks[i]
           if (taskState) Object.assign(taskState, { state: "active", attempt, tier, model: selected })
           if (progress) progress.status = attempt === 2 ? "rework" : "running"
-          const snapshot = schedule && projectSnapshot(integrated!, schedule.tasks[i])
+          const snapshot = scope && projectSnapshot(integrated!, scope)
           try {
-            const report = await turn(role, selected, text, i, attempt, snapshot)
+            const report = await turn("worker", selected, text, i, attempt, reserve, snapshot)
             if (report !== undefined && snapshot) {
               const changes = snapshot.commit(attempt === 1)
               const record = { taskId: d.taskId, attempt, tier, model: selected, sessionID: taskState?.sessionID,
@@ -435,14 +423,14 @@ export async function textRuntime(ctx: Plugin.Context) {
       }
       const status = deadline.aborted && live ? "timed_out" : states.at(-1)
       if (progress) progress.status = status ?? "failed"
-      trace?.record("terminal", { status, reason, turns, requests, states })
+      trace?.record("terminal", { status, reason, turns, requests: roleBudget.requests, states })
       if (live && evidence && reason === "accepted") {
         const detail = "changes" in evidence ? ` (${evidence.results.reduce((sum, r) => sum + r.count, 0)} tests; ${evidence.changes.map(f => f.path).join(", ")})` : ""
         output = `Verified: ${evidence.results.length}/${evidence.results.length} ${multi ? "unittest suites" : "function cases"} passed${detail}. SHA-256: ${evidence.sha256}. Result: ${ws!.path}`
       }
       return { status, reason, states, ids, turns, intentID: plan.intent.id, manager, route: lastRoute, auditor,
         ...(schedule && { workers: integrations }),
-        ...(multi && { ...(review !== undefined && { review }), trace: { path: trace!.path, head: trace!.head }, observedTokens: [...usage.values()].reduce((a,b) => a+b, 0) }),
+        ...(multi && { ...(review !== undefined && { review }), trace: { path: trace!.path, head: trace!.head }, observedTokens: roleBudget.observedTokens }),
         ...(ws && { workspaceFile: ws.path, ...(evidence && { evidence }), requests: Object.fromEntries(["worker","auditor"].map(role =>
           [role, [...roles].filter(([, r]) => r === role).flatMap(([id]) => wire.get(id) ?? [])])) }),
         ...(reason === "accepted" && { output }) }
@@ -450,7 +438,7 @@ export async function textRuntime(ctx: Plugin.Context) {
       const status = quarantined ? "failed" : live && deadline.aborted ? "timed_out" : external.aborted ? "cancelled" : "failed"
       const reason = quarantined ? "Session cleanup failed; host quarantined" : error instanceof Error ? error.message : "host failure"
       if (progress) progress.status = status
-      trace?.record(external.aborted ? "cancel" : "error", { status, turns, requests })
+      trace?.record(external.aborted ? "cancel" : "error", { status, turns, requests: roleBudget.requests })
       states.push(status === "cancelled" ? "cancelled" : "failed")
       return { status, reason, states, ids, turns, ...(trace && { trace: { path: trace.path, head: trace.head } }) }
     } finally {
@@ -475,7 +463,7 @@ export async function textRuntime(ctx: Plugin.Context) {
         timer = setTimeout(() => {
           unresponsive = true
           grants.clear()
-          for (const id of roles.keys()) permits.set(id, 0)
+          for (const id of roles.keys()) permits.set(id, null)
           trace?.record("quarantine", { reason: "host unresponsive after interrupt" })
           resolve({ status: deadline.aborted ? "timed_out" : external.aborted ? "cancelled" : "failed", reason: "Host unresponsive; private host quarantined" })
         }, 3500)

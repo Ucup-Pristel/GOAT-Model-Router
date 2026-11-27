@@ -1,13 +1,12 @@
 import { Model, type Plugin } from "@opencode/plugin"
-import { validateConfig, type ModelRef } from "@goat/core"
+import { digest, validateConfig, validateSchedule, type ModelRef } from "@goat/core"
 import { constants } from "node:fs"
 import { execFile } from "node:child_process"
 import { fileURLToPath } from "node:url"
 import { open } from "node:fs/promises"
 import { basename, isAbsolute, join, relative, resolve } from "node:path"
 import { isDeepStrictEqual } from "node:util"
-import { digest, type ProjectTask } from "./project.js"
-import { validateSchedule } from "./schedule.js"
+import type { ProjectTask } from "./project.js"
 
 export const workspaceBlock = "Standard workspace applies only permitted changes that pass protected checks and independent audit."
 const fileLimit = 16384

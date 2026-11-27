@@ -1,9 +1,8 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { setTimeout as delay } from "node:timers/promises"
-import { canTransition, decideTask, defaults } from "@goat/core"
+import { auditHeader, canTransition, decideTask, defaults, executePlan, RoleBudget } from "@goat/core"
 import { deny, startHost } from "./host-fixture.mjs"
-import { auditHeader, verifiedText } from "../../packages/opencode/src/verified-text.ts"
 
 const worker = { providerID: "fixture", modelID: "mock" }
 const auditor = { providerID: "fixture", modelID: "auditor" }
@@ -62,7 +61,9 @@ async function exercise(h, s, start, ids, states, turns) {
   assert.deepEqual(verification.criteria, [criterion]) // only this fixture has a deterministic oracle
   assert.equal(verification.passCondition, "all-criteria")
 
-  async function turn(role, ref, text) {
+  const budget = new RoleBudget(s.budget)
+  async function turn(role, { model: ref, text, reserve }) {
+    reserve()
     const id = ids[role] ??= await h.session(deny, { title: `Synthetic ${role}`, model: nativeRef(ref) })
     const previous = (await h.api(`session/${id}/context`)).length
     const first = h.calls.length
@@ -98,8 +99,14 @@ async function exercise(h, s, start, ids, states, turns) {
     return output
   }
 
-  return verifiedText(plan, answer, { states, remaining: () => s.budget - (h.calls.length - start),
-    rework: !s.noRework, turn: (role, text) => turn(role, role === "worker" ? route.model : config.models.auditor, text) })
+  const controller = new AbortController()
+  return executePlan(plan, { states, budget, rework: !s.noRework, models: config.models,
+    verification: { kind: "text", expected: answer } }, {
+    inventory: availableModels.map(m => ({ ...m, tools: false })),
+    signal: controller.signal, interruptWorkers: () => controller.abort(), verification: null,
+    runWorker: request => turn("worker", request),
+    audit: request => turn("auditor", request),
+  })
 }
 
 test("one synthetic Manager → native Worker → separate Auditor lifecycle", { timeout: 90000 }, async t => {

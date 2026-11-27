@@ -1,5 +1,4 @@
-import type { CapabilityTier } from "@goat/core"
-import type { ProjectTask } from "./project.js"
+import type { CapabilityTier } from "./manager/contracts.js"
 
 // An empty dependsOn is an explicit Owner assertion of semantic independence.
 // Without this signed description the original ordered plan applies.
@@ -10,7 +9,12 @@ export type ScheduledTask = {
 export type Schedule = { tasks: ScheduledTask[]; concurrency?: number; maxRequests?: number }
 export const taskId = (i: number) => `task-${i + 1}`
 
-export function validateSchedule(project: ProjectTask, workspace = false) {
+export type ScheduledProject = {
+  schedule?: Schedule
+  files: readonly { path: string; role: "edit" | "read" | "test" }[]
+}
+
+export function validateSchedule(project: ScheduledProject, workspace = false) {
   const s = project.schedule
   if (s === undefined) return
   const bounded = (v: unknown, max: number) => typeof v === "number" && Number.isSafeInteger(v) && v >= 1 && v <= max

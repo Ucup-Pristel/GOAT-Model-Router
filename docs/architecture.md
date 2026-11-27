@@ -1,5 +1,7 @@
 # GOAT architecture and decision contract
 
+Current execution boundary: [Task 6 — portable core and OpenCode host](task-6-portable-core.md). The milestone notes below describe the earlier decision and control layers.
+
 ## Status
 
 Task 1 implements configuration and control: `/goat router`, `/goat mode`, `/goat on`, `/goat off`, and `/goat status`. Task 2 adds the Manager decision layer: intent preservation, Standard/Resink planning policy, capability-tier routing, and worker prompt compilation. GOAT starts OFF.

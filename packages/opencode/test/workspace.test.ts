@@ -4,7 +4,7 @@ import {tmpdir} from "node:os"
 import {join} from "node:path"
 import test, {type TestContext} from "node:test"
 import {applyWorkspace,readSnapshot,workspacePlan} from "../src/workspace.js"
-import {digest} from "../src/project.js"
+import {digest} from "@goat/core"
 
 test("workspace assignments do not depend on prompt syntax, extensions, or number of files", () => {
   const paths = Array.from({length:25},(_,i) => `lib/group ${i}/index.ts`)

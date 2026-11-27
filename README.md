@@ -76,8 +76,8 @@ Verify `/goat status` in the real TUI, then exercise router, mode, on, and off. 
 
 ## Layout
 
-- `packages/core`: host-independent lifecycle, configuration contracts, and the Task 2 Manager decision layer (`src/manager`).
-- `packages/opencode`: server plugin (RPC handlers + storage) and TUI plugin (single `/goat` command), with shared RPC contract.
+- `packages/core`: Manager policy and the shared execution engine: routing, scheduling, budgets, scoped snapshots, auditing and rework. See the [Task 6 architecture and Owner live test](docs/task-6-portable-core.md).
+- `packages/opencode`: reference host adapter for native sessions, permissions, workspace verification/write-back, RPC, storage and the `/goat` TUI.
 - `docs/architecture.md`: architecture, contracts, policies, safeguards, and roadmap.
 - `docs/task-2-manager.md`: Task 2 decision contracts, routing policy, prompt compiler, and integration boundary.
 - `docs/task-1a-preflight.md`: Task 1 host integration evidence, RPC root-cause fix, and dependency audit.
