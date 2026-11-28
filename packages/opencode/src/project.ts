@@ -4,11 +4,13 @@ import { dirname, join } from "node:path"
 import { tmpdir } from "node:os"
 import { sandbox } from "./coding.js"
 import { digest, ProjectFileRefusal, validateSchedule, type ProjectFile, type Schedule } from "@goatmr/core"
+import { isolatedCommand, protectEmbeddedChecks, selectVerification, verificationCommand, type Verification } from "./verification.js"
 
 export type ProjectTask = {
   instruction: string; location: string; expires: number; userPlan?: string[]
   schedule?: Schedule
   files: ProjectFile[]
+  verification?: Verification
 }
 
 // The public key is provisioned by the launcher, never accepted from RPC,
@@ -59,8 +61,11 @@ export async function syncProject(ws: Pick<Awaited<ReturnType<typeof provisionPr
 }
 
 export async function provisionProject(task: ProjectTask, signal: AbortSignal) {
+  protectEmbeddedChecks(task.files)
+  const profile = task.verification ?? selectVerification(task.files.filter(f => f.role === "edit").map(f => f.path),task.files.filter(f => f.role === "test").map(f => f.path))
+  const command = verificationCommand(profile,task.files)
   const path = await mkdtemp(join(tmpdir(), "goat-worker-"))
-  if (task.files.some(f => f.role === "test") && await sandbox({ suite: null }, signal, path) !== "isolated") throw Error("Project isolation unavailable")
+  if (profile.profile === "python" && task.files.some(f => f.role === "test") && await sandbox({ suite: null }, signal, path) !== "isolated") throw Error("Project isolation unavailable")
   const files = new Map(task.files.map(f => [f.path, f]))
   const notYetCreated = new Set(task.files.filter(f => f.source === null).map(f => f.path))
   for (const file of files.values()) {
@@ -87,7 +92,7 @@ export async function provisionProject(task: ProjectTask, signal: AbortSignal) {
   async function inspect() {
     const results = []
     for (const file of files.values()) {
-      if (file.role !== "test") continue
+      if (file.role !== "test" || profile.profile !== "python") continue
       const suite = file.path.slice(0, -3).replaceAll("/", ".")
       signal.throwIfAborted()
       let count = 0, passed = false, failures: string[] = []
@@ -106,8 +111,44 @@ export async function provisionProject(task: ProjectTask, signal: AbortSignal) {
       catch (e) { if (f.source !== null || !(e instanceof ProjectFileRefusal)) throw e; after = null }
       if (after !== f.source) changes.push({ path: f.path, before: f.source, after, sha256: digest(after!) })
     }
-    return { changes, results, sha256: digest(JSON.stringify(changes)), passed: changes.length > 0 && results.length > 0 && results.every(r => r.passed) }
+    if (command) {
+      const r = await isolatedCommand(command,path,signal)
+      // Output is evidence, never a trusted count supplied by project code.
+      results.push({suite:command.join(" "),count:1,passed:r.passed,failures:r.passed ? [] : ["Isolated command failed"],output:r.output})
+    }
+    if (profile.profile === "documentation" || profile.profile === "configuration") {
+      for (const f of files.values()) if (f.role === "edit") {
+        let passed = false
+        try {
+          const source = await read(f.path)
+          passed = source.trim().length > 0 && !/^(?:<{7}|={7}|>{7})/m.test(source)
+          if (profile.profile === "configuration") JSON.parse(source)
+        } catch { passed = false }
+        results.push({suite:f.path,count:1,passed,failures:passed ? [] : ["Invalid or empty document/configuration"]})
+      }
+    }
+    const analysis = profile.profile === "analysis"
+    const attributed = profile.profile === "python" ? results : results.map(row => ({...row,taskIds:(task.schedule?.tasks ?? []).flatMap((t,i) =>
+      command || (profile.profile === "documentation" || profile.profile === "configuration") && t.write.includes(row.suite) ||
+      profile.profile === "python" && t.suites.includes(row.suite.replaceAll(".","/")+".py") ? [`task-${i+1}`] : [])}))
+    return { changes, results:attributed, profile:profile.profile,
+      sha256: digest(JSON.stringify(analysis ? task.files : changes)),
+      passed: analysis ? changes.length === 0 : changes.length > 0 && results.length > 0 && results.every(r => r.passed) }
   }
   const baseline = (await inspect()).results
   return { path, read, replace, inspect: async () => ({ ...await inspect(), baseline }), close: async () => {} }
+}
+
+export function provisionAnalysis(task: ProjectTask, signal: AbortSignal) {
+  if (task.files.some(f => f.role === "edit") || task.schedule?.tasks.some(t => t.write.length)) throw Error("Analysis cannot grant writes")
+  const inspect = async () => {
+    signal.throwIfAborted()
+    return {changes:[],results:[],baseline:[],profile:"analysis",inputs:task.files,sha256:digest(JSON.stringify(task.files)),passed:true}
+  }
+  return {path:"",read:async (path?:string) => {
+    signal.throwIfAborted()
+    const f = task.files.find(f => f.path === path)
+    if (!f || f.source === null) throw Error("Outside assigned files")
+    return f.source
+  },replace:async () => { throw Error("Analysis is read-only") },inspect,close:async () => {}}
 }

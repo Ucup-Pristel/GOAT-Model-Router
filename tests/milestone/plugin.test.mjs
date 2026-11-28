@@ -93,7 +93,7 @@ test("Task 5 native workspace: discover, authorize, stage and audit on the paren
       assert.deepEqual(schema.required,["tasks","tests"])
       const entry = schema.properties.tasks.items
       assert.deepEqual(entry.required,["read","write"])
-      assert.equal(entry.properties.write.minItems,1)
+       assert.equal(entry.properties.write.minItems,undefined,"Read-only tasks must allow zero writes")
       assert.match("src/calc.py",new RegExp(entry.properties.write.items.pattern))
       assert.doesNotMatch("../calc.py",new RegExp(entry.properties.read.items.pattern))
       return {tool:"goat_verify_text",args:assignment}
@@ -254,6 +254,8 @@ test("real GOAT plugin RPC on the isolated host", { timeout: 90000 }, async t =>
     assert.equal((await dispatch()).reason, "busy")
     const result = await run
     assert.equal(result.status, "cancelled", JSON.stringify(result))
+    assert.equal(result.diagnostics.code,"GOAT_TIMEOUT")
+    assert.equal(result.diagnostics.roles.worker,"timed_out")
     assert.equal(result.ids.auditor, undefined)
     assert.equal(await closed, true)
     assert.equal((await h.api(`session/${result.ids.worker}`)).outcome, "interrupted")

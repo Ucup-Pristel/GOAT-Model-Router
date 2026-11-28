@@ -54,7 +54,7 @@ export async function startHost(t, syntheticReply, plugin = false, options = {})
       Object.assign(call, { model: id, userText })
       try {
         if (plugin === "workspace" && call.tools.includes("goat_verify_text")) assert.ok(call.tools.every(name => ["goat_verify_text","glob","read"].includes(name)))
-        else if (coding || plugin === "workspace") assert.ok(call.tools.every(name => ["goat_task_file", "skill"].includes(name) || coding && name === "goat_verify_text" || plugin === "workspace" && id === "mock" && name === "glob"))
+        else if (coding || plugin === "workspace") assert.ok(call.tools.every(name => ["goat_task_file", "skill"].includes(name) || coding && name === "goat_verify_text" || plugin === "workspace" && ["glob","read",...(options.authorizedTools ?? [])].includes(name)))
         else if (plugin !== "conversation") assert.equal(tools.length, 0, "synthetic sessions must not advertise tools")
         else assert.ok(call.tools.every(name => ["goat_verify_text", "skill"].includes(name)))
         call.start = performance.now()
@@ -132,7 +132,8 @@ export async function startHost(t, syntheticReply, plugin = false, options = {})
     }
   }
   const config = {
-    ...(plugin && { plugins: [pluginDirectory] }),
+    ...(plugin && { plugins: [options.pluginOptions ? {package:pluginDirectory,options:options.pluginOptions} : pluginDirectory] }),
+    ...(options.mcp && {mcp:typeof options.mcp === "function" ? options.mcp({project}) : options.mcp}),
     ...(coding && { permissions: deny }),
     model: coding ? "owner-lab/manager" : "fixture/mock", update: "disable", warming: false,
     providers: { fixture: { package: "@opencode/ai/providers/openai-compatible",

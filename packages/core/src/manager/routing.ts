@@ -1,5 +1,6 @@
 import type { ModelRef, RoutingDecision, TaskAnalysis, TaskComplexity, TaskContextNeed, TaskRisk, TaskSpecification } from "./contracts.js"
 import type { GoatConfig } from "../config.js"
+import { isProhibitionText } from "./validate.js"
 
 const capabilityTiers = ["L1", "L2", "L3"] as const
 
@@ -9,7 +10,17 @@ function assertCapabilityTier(value: unknown): asserts value is "L1" | "L2" | "L
 
 const highRiskPattern = /\b(?:deploy(?:ment|ing|ed)?|publish(?:ing|ed)?|delete|security|credential|production|migration|database|auth|secret)\b/i
 export function highRiskTerm(text: string): string | undefined {
-  return highRiskPattern.exec(text)?.[0]
+  // Classification is advisory, never authority. Split affirmative follow-on
+  // actions before handling negation so "do not deploy; delete ..." still gates.
+  for (const raw of text.split(/[,.;!?\n:]+|->|=>|\s+(?:and|then|also|but|however|yet)\s+|[+&]/i)) {
+    const clause = raw.trim().replace(/^(?:[-*]|\d+[)])\s+/, "").replace(/^please\s+/i, "")
+    if (isProhibitionText(clause)) continue
+    if (/^(?:analy[sz](?:e|ing|ed)|investigat(?:e|ing|ed)|inspect(?:ing|ed)?|audit(?:ing|ed)?|review(?:ing|ed)?|research(?:ing|ed)?|read(?:ing)?|document(?:ing|ed)?|summariz(?:e|ing|ed)|translat(?:e|ing|ed)|plan(?:ning|ned)?)\b/i.test(clause) &&
+        !/\b(?:by|via|through|before|after|while)\b.*\b(?:delet\w*|deploy\w*|publish\w*|run\w*|execut\w*|modif\w*|access\w*|writ\w*|chang\w*|remov\w*)\b/i.test(clause) &&
+        !/\b(?:read|inspect|access|retrieve|fetch|dump|extract|list)\b.*\b(?:credentials?|secrets?|passwords?|tokens?)\b/i.test(clause)) continue
+    const term = highRiskPattern.exec(clause)?.[0]
+    if (term) return term
+  }
 }
 const contextTerms = ["repository", "codebase", "multiple files", "multi-file", "across the project", "project-wide"]
 const complexityMarkers = [" and ", " then ", " also ", " plus ", " integrate ", " refactor ", " architecture ", " design ", " plan ", " audit ", " test "]

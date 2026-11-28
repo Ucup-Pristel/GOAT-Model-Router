@@ -31,7 +31,7 @@ export function validateSchedule(project: ScheduledProject, workspace = false) {
       typeof t.objective !== "string" || !t.objective.trim() || t.objective !== t.objective.trim() || !workspace && t.objective.length > 512 ||
       t.tier !== undefined && !["L1","L2","L3"].includes(t.tier) ||
       !list(t.dependsOn) || !t.dependsOn.every(id => ids.includes(id)) ||
-      !list(t.criteria) || !t.criteria.length || !list(t.write) || !t.write.length || !list(t.read) || !list(t.suites) ||
+       !list(t.criteria) || !t.criteria.length || !list(t.write) || !list(t.read) || !list(t.suites) ||
       !t.suites.every(path => project.files.some(f => f.role === "test" && f.path === path)) ||
       !t.read.every(path => !t.write.includes(path) && project.files.some(f => f.path === path)) ||
       !t.write.every(path => project.files.some(f => f.path === path && f.role === "edit"))) throw Error(`Invalid scope or dependency for ${ids[i]}`)

@@ -48,7 +48,7 @@ test("workspace proposal errors name the invalid field before dispatch", () => {
   const plan = (overrides:Partial<typeof task> & {dependsOn?:string[]}, tests:string[] = []) =>
     workspacePlan("/demo","Fix the calculator.",{tasks:[{...task,...overrides}],tests},1)
   assert.throws(() => plan({read:undefined}),/tasks\[0\]\.read: expected an array/)
-  assert.throws(() => plan({write:[]}),/tasks\[0\]\.write: specify at least one/)
+  assert.equal(plan({write:[]}).verification?.profile,"analysis")
   assert.throws(() => plan({dependsOn:["task-1"]}),/tasks\[0\]\.dependsOn.*task-1.*use \[\]/)
   assert.throws(() => plan({},["../test_calc.py"]),/tests\[0\].*\.\.\/test_calc.py/)
   assert.throws(() => plan({write:["tests/custom.py"]},["tests/custom.py"]),/tasks\[0\]\.write: tests\/custom.py is a protected test/)

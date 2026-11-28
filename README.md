@@ -2,7 +2,9 @@
 
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-GOAT lets one OpenCode Build session delegate a scoped change to other models, test the result, and ask a separate model to review the evidence **before changing your checkout**. Use it when you want to choose which model plans, implements and reviews a task, and to see what actually passed. GOAT starts **OFF**.
+GOAT lets one OpenCode Build session delegate scoped analysis or implementation to capability-tier Workers and ask an independent Auditor to check the evidence. Verified edits require protected checks and permission **before changing your checkout**; read-only findings return without a write gate. GOAT starts **OFF**.
+
+This development branch includes the unreleased [runtime compatibility patch](docs/runtime-compatibility-patch.md). The published baseline remains `0.1.0-beta.1`.
 
 ```text
 Your prompt in OpenCode Build
@@ -90,8 +92,8 @@ Look for `checksPassed: true`, `reason: verified_applied`, and `application.appl
 ## Support and trust boundaries
 
 - **Distribution target tested:** native OpenCode **2.4.2** on Linux x86-64, including the terminal in VSCodium. No GUI command registration. See [compatibility](docs/compatibility.md) for earlier adapter regression coverage on 2.3.2 and 2.4.1.
-- **Ordinary workspace verifier:** bounded, protected Python `unittest` suites, `/usr/bin/python3`, `/proc`, Landlock ABI ≥3 and `libseccomp.so.2`. OpenCode `glob` needs its ripgrep helper. The helper recognizes Linux x86-64 and aarch64; this package was not tested on ARM. macOS and Windows verified execution/write-back are not supported.
-- **Other profiles:** private regression profiles cover deterministic text, a single Python function and signed multi-file Python projects, including parallel schedules. They are not prerequisites for installation. Other text files can be staged; an unsupported suite does not verify a change or authorize write-back.
+- **Workspace profiles:** protected Python unittest, isolated Node/TypeScript/Rust checks, documentation/JSON inspection, and audited read-only analysis. Command checks require Linux bubblewrap, a resource-controlled systemd user scope and installed toolchains; Python retains its Landlock/seccomp sandbox. See [verification](docs/verification.md) for exact supported commands and evidence semantics. Unsupported verification cannot authorize write-back.
+- **Native tools/MCP:** snapshot-scoped discovery, protected editing, and exact operator-approved external read grants. MCP servers need independently enforced scope; GOAT cannot sandbox an arbitrary remote service. See [compatibility](docs/compatibility.md#native-tools-and-mcp).
 - Install only trusted plugins in trusted workspaces. A server plugin runs with your user's access. Approved content goes to the selected providers. File limits, restricted tools and secret-pattern checks do not detect every sensitive value. Natural-language scope findings are advisory.
 - Verification is evidence for the assigned tests, not a guarantee about every behavior. The Linux write helper rechecks scope and file contents; a multi-file change is not atomic. Unsupported filesystems, changed inputs, cancellation or denied permissions can leave staged or partially applied work. Inspect the receipt; GOAT does not roll back over another editor's changes.
 

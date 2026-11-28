@@ -24,7 +24,6 @@ function verbObject(clause: string, verb: string): string {
 }
 
 const documentaryObject = /\b(?:notes?|guides?|docs?|documentation|plans?|reports?|checklists?|tests?|summar(?:y|ies)|instructions?)$/i
-const descriptiveVerb = /^(?:plan(?:ning|ned)?|review(?:ing|ed)?|document(?:ing|ed)?|summariz(?:e|ing|ed)|translat(?:e|ing|ed))\b/i
 
 const politePrefix = /^(?:please(?:\s+(?:help|make\s+sure))?(?:\s+me)?|kindly|could you(?:\s+kindly)?(?:\s+please)?|can you(?:\s+please)?|would you(?:\s+mind)?|we should|we need to|i need to|i want to|let us|let's|lets)\s+(?:to\s+)?/i
 
@@ -104,7 +103,7 @@ function collectFindingsFromText(text: string, taskId?: string): ScopeFinding[] 
       } else if (documentaryObject.test(object)) continue
     }
     // Intent risk is independent of the proposed objective, tier, and reasoner.
-    const term = taskId === undefined && !descriptiveVerb.test(detection) && highRiskTerm(detection)
+    const term = taskId === undefined && highRiskTerm(detection)
     if (term) findings.push({
       code: "high-risk-instruction",
       severity: "review",
